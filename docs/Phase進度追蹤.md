@@ -6,37 +6,42 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P0** — 建表中
-- **下一步動作**:Jimmy 在 kintone 後台建兩張表
-- **最後更新**:2026-04-13
+- **當前 Phase**:**P0** — 建表中（程式碼已寫到 P3）
+- **下一步動作**:Jimmy 在 kintone 後台建好兩張表 → 填入 App ID → 上傳 JS 測試
+- **最後更新**:2026-04-14
 
 ---
 
 ## Phase 清單
 
-### ⬜ P0 — 兩表建立 + 環境確認 (進行中)
-- [ ] IT 確認 kintone 群組功能啟用
-- [ ] IT 確認 `kintone.getMembersByGroupCode()` 可用
+### 🔲 P0 — 兩表建立 + 環境確認 (進行中)
+- [x] IT 確認 kintone 群組功能啟用
+- [x] IT 確認 `kintone.getMembersByGroupCode()` 可用 ✅ 2026-04-14
+- [x] 確認 kintone 環境：**雲端版** ✅ 2026-04-14
+- [x] 確認 SweetAlert2 已全域載入 ✅ 2026-04-14
 - [ ] 建立 App 1「簽核角色定義表」
 - [ ] 建立 App 2「員工起點對照表」
 - [ ] 設定兩個 App 的權限
-- [ ] 回報 App ID 與環境資訊
+- [ ] 回報 App ID → 填入 `core/01-config.js`
 
-### ⬜ P1 — 角色表 HR 介面 (2 次會話)
-- [ ] `apps/role-definition/01-form-init.js` — 自動產生 role_id
-- [ ] `apps/role-definition/02-field-display.js` — holder_type 條件顯示 group/user 欄位
-- [ ] `apps/role-definition/03-next-role-dropdown.js` — next_role_id 下拉 UI
-- [ ] `core/01-config.js` — 集中管理 App ID、欄位代碼
-- [ ] `core/04-utils.js` — safeHandler、SweetAlert 包裝
-- [ ] `core/05-vendor.js` — SweetAlert2 載入
+### ✅ P1 — 角色表 HR 介面（程式碼已完成，待上傳測試）
+- [x] `core/01-config.js` — 集中管理 App ID、欄位代碼 ✅ 2026-04-14
+- [x] `core/05-vendor.js` — SweetAlert2 存在性檢查 ✅ 2026-04-14
+- [x] `core/04-utils.js` — safeHandler、SweetAlert 包裝 ✅ 2026-04-14
+- [x] `apps/role-definition/01-form-init.js` — 自動產生 role_id ✅ 2026-04-14
+- [x] `apps/role-definition/02-field-display.js` — holder_type 條件顯示 group/user 欄位 ✅ 2026-04-14
+- [x] `apps/role-definition/03-next-role-dropdown.js` — next_role_id 下拉 UI ✅ 2026-04-14
+- [ ] 上傳至 kintone 角色定義表 App 並測試
 
-### ⬜ P2 — 起點表 HR 介面 + 批量匯入
-- [ ] `apps/employee-entry/01-form-init.js`
-- [ ] `apps/employee-entry/02-batch-import.js` (CSV 匯入 + dry-run)
+### ✅ P2 — 起點表 HR 介面 + 批量匯入（程式碼已完成，待上傳測試）
+- [x] `apps/employee-entry/01-form-init.js` — 起點角色下拉選單 ✅ 2026-04-14
+- [x] `apps/employee-entry/02-batch-import.js` — CSV 匯入 + dry-run ✅ 2026-04-14
+- [ ] 上傳至 kintone 員工起點對照表 App 並測試
 
-### ⬜ P3 — 鏈視覺化 + 即時預覽
-- [ ] `apps/role-definition/04-chain-preview.js`
-- [ ] 編輯頁即時預覽
+### ✅ P3 — 鏈視覺化 + 即時預覽（程式碼已完成，待上傳測試）
+- [x] `apps/role-definition/04-chain-preview.js` — 詳情/編輯頁視覺化卡片 ✅ 2026-04-14
+- [x] 編輯頁即時預覽（next_role_id / is_chain_end 變更時自動重繪）✅ 2026-04-14
+- [ ] 上傳至 kintone 角色定義表 App 並測試
 
 ### ⬜ P4 — 核心引擎 ApprovalEngine (2 次會話)
 - [ ] `core/02-api-client.js` — REST API 封裝 + 快取
@@ -72,4 +77,6 @@
 
 | Phase | 完成日期 | 備註 |
 |-------|---------|------|
-| (尚無) | | |
+| P1（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
+| P2（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
+| P3（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |

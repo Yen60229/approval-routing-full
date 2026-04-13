@@ -6,7 +6,7 @@
 
 ## ✅ Step 1：請 IT 確認 kintone 群組功能
 
-- [ ] cybozu.com 後台 → 使用者與系統管理 → **群組（角色）功能已啟用**
+- [x] cybozu.com 後台 → 使用者與系統管理 → **群組（角色）功能已啟用** ✅
 - [ ] 群組類型選 **「靜態」**（自訂成員）
 - [ ] 預先建 1-2 個測試群組，丟進 1-2 個成員（用來測 GROUP_SELECT）
 
@@ -24,10 +24,9 @@ kintone.getMembersByGroupCode('你的測試群組代碼').then(console.log);
 kintone.api(kintone.api.url('/k/v1/groups.json', true), 'GET', {}).then(console.log);
 ```
 
-- [ ] 兩個測試都有正常回應
-- [ ] 如果有錯誤，把錯誤訊息告訴我
-
-> ⚠️ **私有部署版的 kintone 可能沒這些 API**。如果有缺，告訴我，我會調整方案。
+- [x] 兩個測試都有正常回應 ✅ 2026-04-14 已確認可用
+- [x] 確認環境為 **cybozu.com 雲端版** ✅
+- [x] 確認 SweetAlert2 已全域載入 ✅
 
 ---
 
@@ -67,11 +66,11 @@ kintone.api(kintone.api.url('/k/v1/groups.json', true), 'GET', {}).then(console.
 
 完成後，請告訴我：
 
-1. **App 1 的 ID**：（網址列那串數字）
-2. **App 2 的 ID**：（網址列那串數字）
-3. **Step 2 測試結果**：成功 / 失敗（失敗請貼錯誤訊息）
-4. **kintone 環境**：cybozu.com 雲端版 / 私有部署版
-5. **是否已有 SweetAlert2 載入**？（YES / NO，沒有的話我會幫你加）
+1. **App 1 的 ID**：（網址列那串數字）→ ⬜ 待回報
+2. **App 2 的 ID**：（網址列那串數字）→ ⬜ 待回報
+3. **Step 2 測試結果**：✅ 成功
+4. **kintone 環境**：✅ cybozu.com 雲端版
+5. **是否已有 SweetAlert2 載入**？✅ YES
 
 ---
 
@@ -96,4 +95,6 @@ A：Phase 0 不需要。後續 P4 核心引擎開發時，如果有跨 App 查�
 
 ## 🚀 完成 Step 1-6 後
 
-跟我說「**建好了，App ID 是 XXX 跟 YYY**」，我就立刻給你 Phase 1 程式碼（角色表 HR 介面）。
+跟我說「**建好了，App ID 是 XXX 跟 YYY**」，填入 `core/01-config.js` 後即可上傳 JS 測試。
+
+> 📝 **2026-04-14 更新**：P1～P3 程式碼已全部完成，App ID 用佔位符 `0`。建好表後只要改 `core/01-config.js` 的 `APP_ID` 即可。
