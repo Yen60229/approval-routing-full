@@ -1,0 +1,36 @@
+# 系統檔案
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 編輯器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (如果未來有用 npm)
+node_modules/
+package-lock.json
+yarn.lock
+
+# 環境變數與機敏資訊
+.env
+.env.local
+*.key
+*-secret.txt
+api-token.txt
+
+# 建構產物
+dist/
+build/
+*.min.js
+
+# 暫存
+*.tmp
+*.bak
+*.log
+
+# kintone 開發
+customize-manifest.json
