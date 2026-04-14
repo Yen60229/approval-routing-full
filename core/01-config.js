@@ -14,8 +14,8 @@
   'use strict';
 
   const APP_ID = Object.freeze({
-    ROLE_DEFINITION: 0,   // TODO: 建好後填入角色定義表 App ID
-    EMPLOYEE_ENTRY: 0,    // TODO: 建好後填入員工起點對照表 App ID
+    ROLE_DEFINITION: 685,  // 簽核角色定義表
+    EMPLOYEE_ENTRY: 686,   // 員工起點對照表
   });
 
   /** 角色定義表欄位代碼 */

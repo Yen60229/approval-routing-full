@@ -66,8 +66,8 @@ kintone.api(kintone.api.url('/k/v1/groups.json', true), 'GET', {}).then(console.
 
 完成後，請告訴我：
 
-1. **App 1 的 ID**：（網址列那串數字）→ ⬜ 待回報
-2. **App 2 的 ID**：（網址列那串數字）→ ⬜ 待回報
+1. **App 1 的 ID**：**685**（簽核角色定義表）✅
+2. **App 2 的 ID**：**686**（員工起點對照表）✅
 3. **Step 2 測試結果**：✅ 成功
 4. **kintone 環境**：✅ cybozu.com 雲端版
 5. **是否已有 SweetAlert2 載入**？✅ YES

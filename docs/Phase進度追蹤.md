@@ -43,19 +43,22 @@
 - [x] 編輯頁即時預覽（next_role_id / is_chain_end 變更時自動重繪）✅ 2026-04-14
 - [ ] 上傳至 kintone 角色定義表 App 並測試
 
-### ⬜ P4 — 核心引擎 ApprovalEngine (2 次會話)
-- [ ] `core/02-api-client.js` — REST API 封裝 + 快取
-- [ ] `core/03-chain-builder.js` — buildChain() 核心
-- [ ] `window.ApprovalRouting` 對外介面
+### ✅ P4 — 核心引擎 ApprovalEngine（程式碼已完成，待上傳測試）
+- [x] `core/02-api-client.js` — REST API 封裝 + Cache Map ✅ 2026-04-14
+- [x] `core/03-chain-builder.js` — buildChain() 核心 + window.ApprovalRouting 對外介面 ✅ 2026-04-14
+- [ ] 上傳並測試
 
-### ⬜ P5 — 健康檢查工具
-- [ ] `tools/01-health-check.js`
+### ✅ P5 — 健康檢查工具（程式碼已完成，待上傳測試）
+- [x] `tools/01-health-check.js` — 循環/斷鏈/孤立/空holder ✅ 2026-04-14
+- [ ] 上傳並測試
 
-### ⬜ P6 — 測試模擬器
-- [ ] `tools/02-simulator.js`
+### ✅ P6 — 測試模擬器（程式碼已完成，待上傳測試）
+- [x] `tools/02-simulator.js` — 任選員工模擬簽核鏈 ✅ 2026-04-14
+- [ ] 上傳並測試
 
-### ⬜ P7 — 反向查詢 + 主管快捷介面
-- [ ] `tools/03-reverse-query.js`
+### ✅ P7 — 反向查詢（程式碼已完成，待上傳測試）
+- [x] `tools/03-reverse-query.js` — 展開群組 + 找申請人 ✅ 2026-04-14
+- [ ] 上傳並測試
 
 ### ⬜ P8 — 第一個試點 App 接入 (2 次會話)
 - [ ] 選定試點 App
@@ -80,3 +83,7 @@
 | P1（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
 | P2（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
 | P3（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
+| P4（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
+| P5（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
+| P6（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
+| P7（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |

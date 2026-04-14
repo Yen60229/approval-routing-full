@@ -122,8 +122,8 @@ scripts/               ← 部署腳本、遷移腳本
 |------|----|
 | 版本 | cybozu.com **雲端版** |
 | 群組 API | ✅ `kintone.getMembersByGroupCode()` 可用 |
-| 角色定義表 App ID | ⬜ 待建表後填入 `core/01-config.js` |
-| 員工起點對照表 App ID | ⬜ 同上 |
+| 角色定義表 App ID | **685** |
+| 員工起點對照表 App ID | **686** |
 | SweetAlert2 載入狀態 | ✅ 已全域載入 |
 
 ---
