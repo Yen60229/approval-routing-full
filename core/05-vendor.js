@@ -8,7 +8,7 @@
  *   - SweetAlert2（由 kintone 全域載入）
  *
  * 【變更履歷】
- *   2026-04-14  Jimmy/Claude  初版建立
+ *   2026-04-18  Jimmy/Claude  初版建立
  */
 (() => {
   'use strict';

@@ -13,8 +13,8 @@
  *   - 快取 key 統一用字串，Map 存取 O(1)
  *
  * 【變更履歷】
- *   2026-04-14  Jimmy/Claude  初版建立
- *   2026-04-14  Jimmy/Claude  加入 TTL + Promise singleton 防 race condition
+ *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-04-18  Jimmy/Claude  加入 TTL + Promise singleton 防 race condition
  */
 (() => {
   'use strict';
