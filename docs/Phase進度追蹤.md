@@ -46,6 +46,11 @@
 ### ✅ P4 — 核心引擎 ApprovalEngine（程式碼已完成，待上傳測試）
 - [x] `core/02-api-client.js` — REST API 封裝 + Cache Map ✅ 2026-04-14
 - [x] `core/03-chain-builder.js` — buildChain() 核心 + window.ApprovalRouting 對外介面 ✅ 2026-04-14
+- [x] **架構強化 #1～#3** ✅ 2026-04-14
+  - [x] Promise singleton 防並發 race condition
+  - [x] 角色快取 TTL 5 分鐘 + ensureFreshRoles() API
+  - [x] buildChain() 三階段平行化（5 關鏈 1500ms → 300ms 估算）
+  - [x] 新增 `forceFresh` 選項，submit 前可強制最新資料
 - [ ] 上傳並測試
 
 ### ✅ P5 — 健康檢查工具（程式碼已完成，待上傳測試）

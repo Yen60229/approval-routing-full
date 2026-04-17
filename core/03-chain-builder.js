@@ -8,14 +8,15 @@
  *   - core/01-config.js（Config）
  *   - core/02-api-client.js（ApiClient）
  *
- * 【核心流程】
- *   1. 查員工起點角色 ID
- *   2. 沿 next_role_id Linked List 走到 is_chain_end
- *   3. 每關解析 holder（群組 → 成員列表 / 個人 → 直接取值）
- *   4. 回傳 chain 陣列，供申請 App 寫入 approver_chain 子表格
+ * 【核心流程（3 階段）】
+ *   1. 走結構：沿 next_role_id 走完整條鏈（純記憶體，O(n) 無 API）
+ *   2. 平行解析：用 Promise.all 同時解析所有關卡的 holder（N 次並發 API）
+ *   3. 組裝：把角色資料 + holder 結果合併成子表格格式
  *
  * 【變更履歷】
  *   2026-04-14  Jimmy/Claude  初版建立
+ *   2026-04-14  Jimmy/Claude  重構為 3 階段，holder 解析改用 Promise.all 平行化
+ *                              5 關鏈效能：1500ms → 300ms（估算）
  */
 (() => {
   'use strict';
@@ -28,8 +29,12 @@
     SIGNING_MODE_OPTIONS: SM,
   } = window.ApprovalRouting.Config;
 
-  const { getRole, getEntryRoleId, getCurrentUserEntryRoleId, getGroupMembers } =
-    window.ApprovalRouting.ApiClient;
+  const {
+    getRole,
+    getEntryRoleId,
+    getGroupMembers,
+    ensureFreshRoles,
+  } = window.ApprovalRouting.ApiClient;
 
   const MAX_DEPTH = 20;
 
@@ -59,21 +64,60 @@
   };
 
   /**
-   * 將 role record 轉成 chain step 物件
+   * 將角色紀錄 + 已解析 holder 組裝為子表格 step 物件
+   * 純函式（無 I/O），可同步執行
    * @param {Object} roleRecord
+   * @param {string[]} holders - 已解析的簽核者 code 陣列
    * @param {number} stepNo
-   * @returns {Promise<Object>}
+   * @returns {Object}
    */
-  const toChainStep = async (roleRecord, stepNo) => {
-    const holders = await resolveHolders(roleRecord);
-    return {
-      [CF.STEP_NO]:          { value: stepNo },
-      [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
-      [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
-      [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
-      [CF.SIGNED_BY]:        { value: [] },
-      [CF.SIGNED_AT]:        { value: '' },
-    };
+  const assembleChainStep = (roleRecord, holders, stepNo) => ({
+    [CF.STEP_NO]:          { value: stepNo },
+    [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
+    [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
+    [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
+    [CF.SIGNED_BY]:        { value: [] },
+    [CF.SIGNED_AT]:        { value: '' },
+  });
+
+  /**
+   * 走鏈結構（Phase 1）— 只讀快取、不解析 holder
+   *
+   * @param {string} entryRoleId
+   * @returns {Promise<{ok: boolean, roleRecords: Object[], error: string|null}>}
+   */
+  const walkChainStructure = async (entryRoleId) => {
+    const roleRecords = [];
+    const visited = new Set();
+    let currentRoleId = entryRoleId;
+
+    for (let step = 1; step <= MAX_DEPTH; step++) {
+      if (visited.has(currentRoleId)) {
+        return { ok: false, roleRecords, error: `偵測到循環：${currentRoleId} 重複出現` };
+      }
+
+      const roleRecord = await getRole(currentRoleId);
+      if (!roleRecord) {
+        return { ok: false, roleRecords, error: `角色 ${currentRoleId} 不存在或未啟用` };
+      }
+
+      visited.add(currentRoleId);
+      roleRecords.push(roleRecord);
+
+      const isEnd = (roleRecord[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
+      if (isEnd) return { ok: true, roleRecords, error: null };
+
+      currentRoleId = roleRecord[RF.NEXT_ROLE_ID].value;
+      if (!currentRoleId) {
+        return {
+          ok: false,
+          roleRecords,
+          error: `角色 ${roleRecord[RF.ROLE_ID].value} 未設定下一關且未標記終點`,
+        };
+      }
+    }
+
+    return { ok: false, roleRecords, error: `簽核鏈深度超過 ${MAX_DEPTH}，可能存在循環` };
   };
 
   // -------------------------------------------------------------------
@@ -81,9 +125,12 @@
   // -------------------------------------------------------------------
 
   /**
-   * 建構簽核鏈
+   * 建構簽核鏈（三階段平行化版本）
    *
    * @param {string} employeeCode - 申請人的 kintone 使用者代碼
+   * @param {Object} [options]
+   * @param {boolean} [options.forceFresh=false]
+   *   true 時強制重新載入角色快取；正式 submit 前建議設 true 避免用到過期資料
    * @returns {Promise<{
    *   ok: boolean,
    *   chain: Object[],   // approver_chain 子表格的 value 陣列
@@ -91,46 +138,36 @@
    * }>}
    *
    * @example
-   * const { ok, chain, error } = await ApprovalRouting.buildChain('yamada');
-   * if (!ok) { console.error(error); return; }
+   * // 預覽用（快，可用快取）
+   * const { ok, chain } = await ApprovalRouting.buildChain('yamada');
+   *
+   * // Submit 用（慢一點，但保證資料最新）
+   * const { ok, chain } = await ApprovalRouting.buildChain('yamada', { forceFresh: true });
    * event.record.approver_chain.value = chain;
    */
-  const buildChain = async (employeeCode) => {
+  const buildChain = async (employeeCode, { forceFresh = false } = {}) => {
     try {
+      if (forceFresh) await ensureFreshRoles();
+
+      // 起點查詢
       const entryRoleId = await getEntryRoleId(employeeCode);
       if (!entryRoleId) {
         return { ok: false, chain: [], error: `員工 ${employeeCode} 未設定起點角色` };
       }
 
-      const chain = [];
-      const visited = new Set();
-      let currentRoleId = entryRoleId;
-
-      for (let step = 1; step <= MAX_DEPTH; step++) {
-        if (visited.has(currentRoleId)) {
-          return { ok: false, chain, error: `偵測到循環：${currentRoleId} 重複出現` };
-        }
-
-        const roleRecord = await getRole(currentRoleId);
-        if (!roleRecord) {
-          return { ok: false, chain, error: `角色 ${currentRoleId} 不存在或未啟用` };
-        }
-
-        visited.add(currentRoleId);
-        chain.push(await toChainStep(roleRecord, step));
-
-        const isEnd = (roleRecord[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
-        if (isEnd) break;
-
-        currentRoleId = roleRecord[RF.NEXT_ROLE_ID].value;
-        if (!currentRoleId) {
-          return { ok: false, chain, error: `角色 ${roleRecord[RF.ROLE_ID].value} 未設定下一關且未標記終點` };
-        }
+      // Phase 1：走結構（純快取讀取，無 API 呼叫）
+      const walked = await walkChainStructure(entryRoleId);
+      if (!walked.ok) {
+        return { ok: false, chain: [], error: walked.error };
       }
 
-      if (chain.length >= MAX_DEPTH) {
-        return { ok: false, chain, error: `簽核鏈深度超過 ${MAX_DEPTH}，可能存在循環` };
-      }
+      // Phase 2：平行解析所有 holder（N 次 API 同時發）
+      const holderLists = await Promise.all(walked.roleRecords.map(resolveHolders));
+
+      // Phase 3：組裝（純 CPU，瞬間完成）
+      const chain = walked.roleRecords.map((rec, idx) =>
+        assembleChainStep(rec, holderLists[idx], idx + 1)
+      );
 
       return { ok: true, chain, error: null };
 
@@ -141,11 +178,12 @@
 
   /**
    * 建構目前登入使用者的簽核鏈
+   * @param {Object} [options] - 同 buildChain
    * @returns {Promise<{ok, chain, error}>}
    */
-  const buildChainForCurrentUser = async () => {
+  const buildChainForCurrentUser = async (options) => {
     const userCode = kintone.getLoginUser().code;
-    return buildChain(userCode);
+    return buildChain(userCode, options);
   };
 
   /**
