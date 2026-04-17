@@ -15,6 +15,7 @@
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
  *   2026-04-18  Jimmy/Claude  加入 TTL + Promise singleton 防 race condition
+ *   2026-04-18  Jimmy/Claude  新增 clearEntryCache 供測試環境使用
  */
 (() => {
   'use strict';
@@ -33,7 +34,7 @@
   /** @type {Promise<void>|null} 正在進行中的載入 promise；用來防止並發重複 fetch */
   let roleLoadPromise = null;
 
-  /** @type {Map<string, Object>} employeeCode → entry record */
+  /** @type {Map<string, string|null>} employeeCode → entry_role_id */
   const entryCache = new Map();
 
   /**
@@ -128,6 +129,13 @@
   };
 
   /**
+   * 清除員工起點快取（測試環境 / 批量匯入後用）
+   */
+  const clearEntryCache = () => {
+    entryCache.clear();
+  };
+
+  /**
    * 強制重新載入角色快取（submit 前確保資料最新）
    * 等價於 clearRoleCache() + loadAllRoles()
    * @returns {Promise<void>}
@@ -191,6 +199,7 @@
     getRole,
     getAllRoles,
     clearRoleCache,
+    clearEntryCache,
     ensureFreshRoles,
     getEntryRoleId,
     getCurrentUserEntryRoleId,

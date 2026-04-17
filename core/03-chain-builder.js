@@ -14,7 +14,7 @@
  *   3. 組裝：把角色資料 + holder 結果合併成子表格格式
  *
  * 【變更履歷】
- *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-04-14  Jimmy/Claude  初版建立
  *   2026-04-18  Jimmy/Claude  重構為 3 階段，holder 解析改用 Promise.all 平行化
  *                              5 關鏈效能：1500ms → 300ms（估算）
  */
