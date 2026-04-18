@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(date /t)",
-      "Bash(powershell -Command \"Get-Date -Format 'yyyy-MM-dd'\")"
+      "Bash(powershell -Command \"Get-Date -Format 'yyyy-MM-dd'\")",
+      "Bash(npm install *)",
+      "Bash(npm test *)"
     ]
   }
 }

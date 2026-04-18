@@ -6,7 +6,7 @@
 
 | 檔案 | 用途 |
 |------|------|
-| `01-form-init.js` | 自動產生 role_id |
+| `01-role-form-init.js` | 自動產生 role_id |
 | `02-field-display.js` | holder_type 條件顯示 |
 | `03-next-role-dropdown.js` | next_role_id 下拉 UI |
 | `04-chain-preview.js` | 鏈視覺化卡片 |
@@ -15,7 +15,7 @@
 
 | 檔案 | 用途 |
 |------|------|
-| `01-form-init.js` | 表單初始化 |
+| `01-entry-form-init.js` | 表單初始化 |
 | `02-batch-import.js` | CSV 批量匯入 |
 
 ## 載入順序(kintone 後台設定時)

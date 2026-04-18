@@ -28,13 +28,13 @@
 - [x] `core/01-config.js` — 集中管理 App ID、欄位代碼 ✅ 2026-04-14
 - [x] `core/05-vendor.js` — SweetAlert2 存在性檢查 ✅ 2026-04-14
 - [x] `core/04-utils.js` — safeHandler、SweetAlert 包裝 ✅ 2026-04-14
-- [x] `apps/role-definition/01-form-init.js` — 自動產生 role_id ✅ 2026-04-14
+- [x] `apps/role-definition/01-role-form-init.js` — 自動產生 role_id ✅ 2026-04-14
 - [x] `apps/role-definition/02-field-display.js` — holder_type 條件顯示 group/user 欄位 ✅ 2026-04-14
 - [x] `apps/role-definition/03-next-role-dropdown.js` — next_role_id 下拉 UI ✅ 2026-04-14
 - [ ] 上傳至 kintone 角色定義表 App 並測試
 
 ### ✅ P2 — 起點表 HR 介面 + 批量匯入（程式碼已完成，待上傳測試）
-- [x] `apps/employee-entry/01-form-init.js` — 起點角色下拉選單 ✅ 2026-04-14
+- [x] `apps/employee-entry/01-entry-form-init.js` — 起點角色下拉選單 ✅ 2026-04-14
 - [x] `apps/employee-entry/02-batch-import.js` — CSV 匯入 + dry-run ✅ 2026-04-14
 - [ ] 上傳至 kintone 員工起點對照表 App 並測試
 

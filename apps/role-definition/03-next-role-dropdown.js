@@ -1,7 +1,7 @@
 /**
  * 角色定義表 — next_role_id 下拉選單 UI
  *
- * 原生 next_role_id 是文字欄位（已由 01-form-init 隱藏），
+ * 原生 next_role_id 是文字欄位（已由 01-role-form-init 隱藏），
  * 本檔在空白欄位旁動態產生下拉選單，HR 用點的選「下一關角色」。
  *
  * 【影響的欄位】

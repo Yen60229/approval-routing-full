@@ -172,7 +172,7 @@
       return { ok: true, chain, error: null };
 
     } catch (err) {
-      return { ok: false, chain: [], error: err.message };
+      return { ok: false, chain: [], error: err.message ?? String(err) };
     }
   };
 
