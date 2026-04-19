@@ -260,10 +260,11 @@
     }
 
     // 2. 編輯/新增頁：用 kintone API 取得 space 欄位
+    //    不清空整個 spaceEl（03-next-role-dropdown.js 的自訂下拉也住在這裡）
+    //    只替換舊的 preview container，新的插到最前面（下拉保持在下方）
     const spaceEl = kintone.app.record.getSpaceElement('chain_preview');
     if (spaceEl) {
-      spaceEl.innerHTML = '';
-      spaceEl.appendChild(container);
+      spaceEl.insertBefore(container, spaceEl.firstChild);
       return;
     }
 

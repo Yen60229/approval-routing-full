@@ -73,12 +73,15 @@
     })
   );
 
-  // 編輯記錄：role_id 鎖定不可改 + 隱藏代碼欄位
+  // 編輯記錄：role_id 鎖定不可改 + 隱藏所有代碼欄位（HR 不需看到技術代碼）
   kintone.events.on(
     ['app.record.edit.show', 'app.record.index.edit.show'],
     safeHandler(async (event) => {
       event.record[F.ROLE_ID].disabled = true;
-      setTimeout(hideCodeFields, 0);
+      setTimeout(() => {
+        hideCodeFields();
+        kintone.app.record.setFieldShown(F.ROLE_ID, false); // 編輯頁不顯示角色代碼
+      }, 0);
       return event;
     })
   );
