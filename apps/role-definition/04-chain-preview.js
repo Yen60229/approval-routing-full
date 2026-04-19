@@ -320,15 +320,21 @@
     }),
   );
 
+  // is_chain_end 變更：kintone 原生 checkbox，change 事件正常觸發
+  // next_role_id 變更：由自訂下拉（03）透過 record.set() 寫入，不觸發 kintone change 事件
+  //   → 改由 03-next-role-dropdown.js 直接呼叫 window.ApprovalRouting.ChainPreview.refresh()
   kintone.events.on(
-    [
-      `app.record.edit.change.${F.IS_CHAIN_END}`,
-      `app.record.edit.change.${F.NEXT_ROLE_ID}`,
-    ],
+    [`app.record.edit.change.${F.IS_CHAIN_END}`],
     safeHandler(async (event) => {
       const roleId = event.record[F.ROLE_ID].value;
       await renderChainPreview(roleId);
       return event;
     }),
   );
+
+  // 對外暴露，供 03-next-role-dropdown.js 在 dropdown change 後手動呼叫
+  window.ApprovalRouting = window.ApprovalRouting || {};
+  window.ApprovalRouting.ChainPreview = Object.freeze({
+    refresh: renderChainPreview,
+  });
 })();

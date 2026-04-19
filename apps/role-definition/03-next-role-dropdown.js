@@ -119,10 +119,16 @@
     const select = document.getElementById(DROPDOWN_ID);
     if (!select) return;
 
-    select.addEventListener('change', () => {
+    select.addEventListener('change', async () => {
       const rec = kintone.app.record.get();
       rec.record[F.NEXT_ROLE_ID].value = select.value;
       kintone.app.record.set(rec);
+
+      // kintone.app.record.set() 不觸發 change 事件，需手動通知 04-chain-preview.js 刷新
+      // 此時 04 已載入，window.ApprovalRouting.ChainPreview.refresh 一定存在
+      await window.ApprovalRouting.ChainPreview?.refresh(
+        rec.record[F.ROLE_ID].value,
+      );
     });
   };
 
