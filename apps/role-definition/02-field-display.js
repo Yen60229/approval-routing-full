@@ -156,6 +156,9 @@
       const rec = event.record;
       const holderType = rec[F.HOLDER_TYPE].value;
 
+      // 儲存前強制清除非使用中的 holder 欄位，防止殘留舊資料寫入 DB
+      clearInactiveHolder(rec, holderType);
+
       if (
         holderType === HT.GROUP &&
         (!rec[F.HOLDER_GROUP].value || rec[F.HOLDER_GROUP].value.length === 0)
