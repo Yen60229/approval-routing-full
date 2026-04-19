@@ -345,16 +345,14 @@
     }),
   );
 
-  // is_chain_end 變更：kintone 原生 checkbox，change 事件正常觸發
-  // next_role_id 變更：由自訂下拉（03）透過 record.set() 寫入，不觸發 kintone change 事件
-  //   → 改由 03-next-role-dropdown.js 直接呼叫 window.ApprovalRouting.ChainPreview.refresh()
+  // change 事件規定：不可回傳 Thenable，必須同步 return event
+  // → 以 fire-and-forget 呼叫非同步的 renderChainPreview
   kintone.events.on(
     [`app.record.edit.change.${F.IS_CHAIN_END}`],
-    safeHandler(async (event) => {
-      const roleId = event.record[F.ROLE_ID].value;
-      await renderChainPreview(roleId);
+    (event) => {
+      renderChainPreview(event.record[F.ROLE_ID].value).catch(console.error);
       return event;
-    }),
+    },
   );
 
   // 對外暴露，供 03-next-role-dropdown.js 在 dropdown change 後手動呼叫

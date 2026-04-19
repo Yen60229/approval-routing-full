@@ -176,12 +176,13 @@
 
   // is_chain_end 變更時：勾選 → 隱藏下拉 + 清空 next_role_id
   //                      取消 → 顯示下拉
+  // change 事件不可回傳 Thenable，同步 return；initDropdown fire-and-forget
   kintone.events.on(
     [
       `app.record.create.change.${F.IS_CHAIN_END}`,
       `app.record.edit.change.${F.IS_CHAIN_END}`,
     ],
-    safeHandler(async (event) => {
+    (event) => {
       const container = document.getElementById(CONTAINER_ID);
 
       if (isChainEnd(event.record)) {
@@ -191,11 +192,11 @@
         if (container) {
           container.style.display = '';
         } else {
-          await initDropdown(event);
+          initDropdown(event).catch(console.error);
         }
       }
       return event;
-    })
+    }
   );
 
   // 儲存前驗證：非終點角色必須選擇下一關
