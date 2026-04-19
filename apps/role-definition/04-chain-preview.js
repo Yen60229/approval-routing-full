@@ -284,7 +284,32 @@
       );
       return;
     }
+
+    // ① 立刻顯示 Loading（同步，不等 API）
+    mountPreview(`
+    <div style="padding:16px 24px;display:flex;align-items:center;gap:10px;color:#888;font-size:14px;">
+      <span style="display:inline-block;width:16px;height:16px;border:2px solid #1a73e8;
+                   border-top-color:transparent;border-radius:50%;
+                   animation:ar-spin 0.7s linear infinite;flex-shrink:0;"></span>
+      更新預覽，請稍後…
+    </div>
+    <style>
+      @keyframes ar-spin { to { transform: rotate(360deg); } }
+    </style>
+  `);
+
+    // ② API 回來後，以記憶體值覆寫當前角色（編輯中尚未儲存的欄位）
     const roleMap = await fetchRoleMap();
+    const liveEntry = roleMap.get(currentRoleId);
+    if (liveEntry) {
+      try {
+        // kintone.app.record.get() 在 edit/detail/create 頁均可用
+        const rec = kintone.app.record.get().record;
+        liveEntry.nextRoleId  = rec[F.NEXT_ROLE_ID].value || '';
+        liveEntry.isChainEnd  = (rec[F.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
+      } catch { /* detail 頁 or 無 record context → 跳過，使用 DB 值 */ }
+    }
+
     const html = renderFullChainHtml(currentRoleId, roleMap);
     mountPreview(html);
   };
