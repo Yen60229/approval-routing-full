@@ -22,6 +22,8 @@
   const ROLE_FIELDS = Object.freeze({
     ROLE_ID:        'role_id',
     ROLE_NAME:      'role_name',
+    UNIT_NAME:      'unit_name',
+    TITLE_LEVEL:    'title_level',
     HOLDER_TYPE:    'holder_type',
     HOLDER_GROUP:   'holder_group',
     HOLDER_USER:    'holder_user',
@@ -48,6 +50,11 @@
     ANY: '任一人簽',
     ALL: '全員會簽',
   });
+
+  /** title_level 固定職級選項（由低至高） */
+  const TITLE_LEVEL_OPTIONS = Object.freeze([
+    '課長', '次長', '部長', '部門長', '本部長', '總經理',
+  ]);
 
   /** 員工起點對照表欄位代碼 */
   const ENTRY_FIELDS = Object.freeze({
@@ -78,6 +85,7 @@
     HOLDER_TYPE_OPTIONS,
     CHECKBOX,
     SIGNING_MODE_OPTIONS,
+    TITLE_LEVEL_OPTIONS,
     ENTRY_FIELDS,
     CHAIN_FIELDS,
     ROLE_ID_PREFIX,
