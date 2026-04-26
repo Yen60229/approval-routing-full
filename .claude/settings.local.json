@@ -4,7 +4,18 @@
       "Bash(date /t)",
       "Bash(powershell -Command \"Get-Date -Format 'yyyy-MM-dd'\")",
       "Bash(npm install *)",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(gh repo *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(claude --version)",
+      "Read(//c/Users/User/.claude/plugins//**)",
+      "Read(//c/Users/User/.claude/plugins/**)",
+      "Read(//c/Users/User/.claude//**)",
+      "Read(//c/Users/User/.claude/**)",
+      "Bash(npm show *)",
+      "Bash(npm update *)",
+      "Bash(claude plugin *)"
     ]
   }
 }
