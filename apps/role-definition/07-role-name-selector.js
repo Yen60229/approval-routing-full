@@ -16,7 +16,7 @@
 (() => {
   'use strict';
 
-  const { ROLE_FIELDS: F, TITLE_LEVEL_OPTIONS } = window.ApprovalRouting.Config;
+  const { ROLE_FIELDS: F, TITLE_LEVEL_OPTIONS, APP_ID } = window.ApprovalRouting.Config;
   const { safeHandler } = window.ApprovalRouting.Utils;
 
   const CONFIG = Object.freeze({
@@ -35,17 +35,35 @@
 
   // ─── 工具函式 ───────────────────────────────────────────────────────────────
 
+  /** unit_name 選項快取（避免重複 API 請求） */
+  let _cachedUnitOptions = null;
+
   /**
-   * 從原生 <select> 讀取所有選項值（必須在 setFieldShown=false 之前呼叫）
-   * @param {string} fieldCode
-   * @returns {string[]}
+   * 透過 REST API 讀取 unit_name 欄位的下拉選項清單
+   * kintone 下拉欄位沒有標準 <select> DOM，必須從 form/fields API 取得
+   * @returns {Promise<string[]>}
    */
-  const readNativeOptions = (fieldCode) => {
-    const fieldEl = kintone.app.record.getFieldElement(fieldCode);
-    if (!fieldEl) return [];
-    const select = fieldEl.querySelector('select');
-    if (!select) return [];
-    return [...select.options].map((o) => o.value).filter((v) => v !== '');
+  const fetchUnitOptions = async () => {
+    if (_cachedUnitOptions) return _cachedUnitOptions;
+    try {
+      const resp = await kintone.api(
+        kintone.api.url('/k/v1/app/form/fields', true),
+        'GET',
+        { app: APP_ID.ROLE_DEFINITION },
+      );
+      const field = resp.properties[F.UNIT_NAME];
+      if (!field?.options) {
+        console.warn('[AR-07] unit_name 欄位找不到選項，請確認後台欄位設定');
+        return [];
+      }
+      _cachedUnitOptions = Object.values(field.options)
+        .sort((a, b) => Number(a.index) - Number(b.index))
+        .map((o) => o.label);
+      return _cachedUnitOptions;
+    } catch (err) {
+      console.error('[AR-07] 讀取 unit_name 選項失敗', err);
+      return [];
+    }
   };
 
   /**
@@ -103,12 +121,12 @@
 
   // ─── 主要邏輯 ───────────────────────────────────────────────────────────────
 
-  const mountSelectorUI = (record) => {
-    // unit_name：從原生 select 讀取選項（IT 在 App 設定維護）
-    const unitOptions = readNativeOptions(F.UNIT_NAME);
-    const currentUnit = record[F.UNIT_NAME]?.value || '';
+  const mountSelectorUI = async (record) => {
+    // unit_name：透過 REST API 從後台欄位設定讀取選項（IT 維護）
+    const unitOptions  = await fetchUnitOptions();
+    const currentUnit  = record[F.UNIT_NAME]?.value  || '';
 
-    // title_level：固定清單，直接使用 Config 常數（不從 DOM 讀）
+    // title_level：固定清單，直接使用 Config 常數
     const titleOptions = [...TITLE_LEVEL_OPTIONS];
     const currentTitle = record[F.TITLE_LEVEL]?.value || '';
 
@@ -135,7 +153,7 @@
   kintone.events.on(
     ['app.record.create.show', 'app.record.edit.show'],
     safeHandler(async (event) => {
-      mountSelectorUI(event.record);
+      await mountSelectorUI(event.record);
       return event;
     }),
   );
