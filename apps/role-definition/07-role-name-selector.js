@@ -21,7 +21,9 @@
 
   const CONFIG = Object.freeze({
     UNIT_INPUT_ID:  'ar-unit-search',
+    UNIT_LABEL:     '單位',
     TITLE_INPUT_ID: 'ar-title-search',
+    TITLE_LABEL:    '職稱',
     INPUT_STYLE: [
       'width:100%',
       'padding:10px 14px',
@@ -68,22 +70,28 @@
 
   /**
    * 隱藏原生欄位，並在其前方插入可搜尋 input+datalist
-   * @param {string}   fieldCode    - kintone 欄位代碼
+   * kintone DOM 只有內部數字 ID，無欄位代碼；改用欄位顯示名稱定位容器
+   * @param {string}   fieldCode    - kintone 欄位代碼（用於 setFieldShown / record.set）
    * @param {string}   inputId      - 注入 input 的 DOM id
+   * @param {string}   labelText    - kintone 後台設定的欄位顯示名稱（用於 DOM 定位）
    * @param {string[]} options      - 下拉選項清單
    * @param {string}   currentValue - 預填值（編輯頁用，空字串則空白）
    * @param {string}   placeholder  - 輸入框提示文字
    */
-  const injectSearchInput = (fieldCode, inputId, options, currentValue, placeholder) => {
+  const injectSearchInput = (fieldCode, inputId, labelText, options, currentValue, placeholder) => {
     if (document.getElementById(inputId)) return; // 避免重複注入
 
-    const fieldEl = kintone.app.record.getFieldElement(fieldCode);
+    kintone.app.record.setFieldShown(fieldCode, false);
+
+    // kintone DOM 不含欄位代碼，透過顯示名稱找容器（setFieldShown 後元素仍在 DOM 中）
+    const fieldEl = [...document.querySelectorAll('.control-label-text-gaia')]
+      .find((el) => el.textContent.trim() === labelText)
+      ?.closest('.control-gaia');
+
     if (!fieldEl) {
-      console.warn(`[AR-07] 找不到欄位 ${fieldCode}，請確認 kintone 後台已新增此欄位`);
+      console.warn(`[AR-07] 找不到欄位容器（${labelText}），請確認欄位已放入表單版面`);
       return;
     }
-
-    kintone.app.record.setFieldShown(fieldCode, false);
 
     const listId = `${inputId}-list`;
 
@@ -133,6 +141,7 @@
     injectSearchInput(
       F.UNIT_NAME,
       CONFIG.UNIT_INPUT_ID,
+      CONFIG.UNIT_LABEL,
       unitOptions,
       currentUnit,
       '輸入單位名稱（如 MIS、HR…）',
@@ -141,6 +150,7 @@
     injectSearchInput(
       F.TITLE_LEVEL,
       CONFIG.TITLE_INPUT_ID,
+      CONFIG.TITLE_LABEL,
       titleOptions,
       currentTitle,
       '輸入職級（如 課長、部長…）',
