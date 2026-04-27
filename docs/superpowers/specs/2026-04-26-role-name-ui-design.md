@@ -114,7 +114,7 @@ role_name 同步變成「資訊部_課長」
 | 現有 role_name 舊記錄（文字格式） | 欄位改為計算欄位後，kintone 會以公式重算；若 unit_name 或 title_level 舊記錄為空，role_name 結果為 `"_"` 或缺值 → **Jimmy 需在改欄位類型前，先確認所有舊記錄都有 unit_name + title_level 的值** |
 | 新單位（現有清單沒有的）| IT 到 App 設定 → unit_name 欄位 → 新增選項 → 即時生效 |
 | 雙職位人員作為送單起點 | 由 kintone 優先組織決定 entry_role_id；例外情況由 employee_entry（App 686）手動覆蓋，**無需程式** |
-| unit_name 或 title_level 任一為空時送出 | `01-role-form-init.js` 的必填驗證（或新增至 `07-role-name-selector.js`）攔截，顯示 SweetAlert 提示 |
+| unit_name 或 title_level 任一為空時送出 | `07-role-name-selector.js` 的 submit 事件攔截，顯示 SweetAlert 提示 |
 
 ---
 

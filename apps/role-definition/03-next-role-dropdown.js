@@ -84,32 +84,24 @@
   };
 
   /**
-   * 將下拉選單插入空白欄位（chain_preview 區塊上方）
-   * 找不到空白欄位時 fallback 到表單最上方
+   * 將下拉選單掛入 chain_preview 空白欄位（Timeline 下方）
+   * 讓「鏈視覺化」與「下一關選擇」在同一區塊，視覺邏輯連貫
    */
   const mountDropdown = (container) => {
-    // 移除舊的（避免重複）
     const old = document.getElementById(CONTAINER_ID);
     if (old) old.remove();
 
-    // 嘗試插入到 next_role_id 欄位的位置
-    const fieldEl = document.querySelector(`.field-${F.NEXT_ROLE_ID}`);
-    if (fieldEl) {
-      fieldEl.parentNode.insertBefore(container, fieldEl.nextSibling);
+    // 掛在 chain_preview space 內部最尾端（Timeline 之後）
+    const spaceEl = kintone.app.record.getSpaceElement('chain_preview');
+    if (spaceEl) {
+      spaceEl.appendChild(container);
       return;
     }
 
-    // fallback: 插到 chain_preview 空白欄位上方
-    const previewEl = document.getElementById('chain_preview');
-    if (previewEl) {
-      previewEl.parentNode.insertBefore(container, previewEl);
-      return;
-    }
-
-    // 最終 fallback
+    // fallback
     const formEl = document.querySelector('.gaia-argoui-app-edit-record') ||
                    document.querySelector('#record-gaia');
-    if (formEl) formEl.prepend(container);
+    if (formEl) formEl.appendChild(container);
   };
 
   /**
@@ -119,10 +111,16 @@
     const select = document.getElementById(DROPDOWN_ID);
     if (!select) return;
 
-    select.addEventListener('change', () => {
+    select.addEventListener('change', async () => {
       const rec = kintone.app.record.get();
       rec.record[F.NEXT_ROLE_ID].value = select.value;
       kintone.app.record.set(rec);
+
+      // kintone.app.record.set() 不觸發 change 事件，需手動通知 04-chain-preview.js 刷新
+      // 此時 04 已載入，window.ApprovalRouting.ChainPreview.refresh 一定存在
+      await window.ApprovalRouting.ChainPreview?.refresh(
+        rec.record[F.ROLE_ID].value,
+      );
     });
   };
 
@@ -170,12 +168,13 @@
 
   // is_chain_end 變更時：勾選 → 隱藏下拉 + 清空 next_role_id
   //                      取消 → 顯示下拉
+  // change 事件不可回傳 Thenable，同步 return；initDropdown fire-and-forget
   kintone.events.on(
     [
       `app.record.create.change.${F.IS_CHAIN_END}`,
       `app.record.edit.change.${F.IS_CHAIN_END}`,
     ],
-    safeHandler(async (event) => {
+    (event) => {
       const container = document.getElementById(CONTAINER_ID);
 
       if (isChainEnd(event.record)) {
@@ -185,11 +184,11 @@
         if (container) {
           container.style.display = '';
         } else {
-          await initDropdown(event);
+          initDropdown(event).catch(console.error);
         }
       }
       return event;
-    })
+    }
   );
 
   // 儲存前驗證：非終點角色必須選擇下一關

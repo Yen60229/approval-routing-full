@@ -55,30 +55,32 @@
 
   // --- 事件綁定 ---
 
-  // 新增記錄：載入時自動產生 role_id
+  // 新增記錄：載入時自動產生 role_id，並隱藏所有代碼欄位
   kintone.events.on(
     ['app.record.create.show'],
     safeHandler(async (event) => {
       const seq = await getMaxSequence();
       event.record[F.ROLE_ID].value = generateRoleId(seq + 1);
-
-      // role_id 設為不可編輯（程式產生，HR 不該改）
       event.record[F.ROLE_ID].disabled = true;
 
-      // 先 return event 再隱藏欄位（kintone 規則：set 之後才 setFieldShown）
-      // 但 show 事件中 return event 等同 set，所以用 setTimeout 確保順序
-      setTimeout(hideCodeFields, 0);
+      setTimeout(() => {
+        hideCodeFields();
+        kintone.app.record.setFieldShown(F.ROLE_ID, false); // HR 不需要看到技術代碼
+      }, 0);
 
       return event;
     })
   );
 
-  // 編輯記錄：role_id 鎖定不可改 + 隱藏代碼欄位
+  // 編輯記錄：role_id 鎖定不可改 + 隱藏所有代碼欄位（HR 不需看到技術代碼）
   kintone.events.on(
     ['app.record.edit.show', 'app.record.index.edit.show'],
     safeHandler(async (event) => {
       event.record[F.ROLE_ID].disabled = true;
-      setTimeout(hideCodeFields, 0);
+      setTimeout(() => {
+        hideCodeFields();
+        kintone.app.record.setFieldShown(F.ROLE_ID, false); // 編輯頁不顯示角色代碼
+      }, 0);
       return event;
     })
   );

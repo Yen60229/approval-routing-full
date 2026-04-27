@@ -3,22 +3,19 @@
     "allow": [
       "Bash(date /t)",
       "Bash(powershell -Command \"Get-Date -Format 'yyyy-MM-dd'\")",
-      "Read(//c/Users/User/.claude//**)",
-      "Read(//c/Users/User/.claude/projects//**)",
-      "Bash(wmic shadowcopy *)",
+      "Bash(npm install *)",
       "Bash(npm test *)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" status)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" log --oneline -5)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" pull origin main)",
-      "Bash(git rev-list *)",
-      "Bash(git add *)",
-      "Bash(git commit -m ' *)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" diff -- \"docs/00-規格書.md\" \"docs/Phase進度追蹤.md\" \"docs/對話脈絡.md\" \"apps/README.md\")",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" add docs/superpowers/specs/2026-04-26-role-name-ui-design.md .claude/settings.local.json)",
-      "Bash(git -C D:/Javascript-training/approval-routing-full commit -m ' *)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" add docs/superpowers/plans/2026-04-27-role-name-selector.md)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" push origin main)",
-      "Bash(git -C \"D:/Javascript-training/approval-routing-full\" add core/01-config.js apps/role-definition/07-role-name-selector.js)"
+      "Bash(gh repo *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(claude --version)",
+      "Read(//c/Users/User/.claude/plugins//**)",
+      "Read(//c/Users/User/.claude/plugins/**)",
+      "Read(//c/Users/User/.claude//**)",
+      "Read(//c/Users/User/.claude/**)",
+      "Bash(npm show *)",
+      "Bash(npm update *)",
+      "Bash(claude plugin *)"
     ]
   }
 }

@@ -138,10 +138,10 @@
    * }>}
    *
    * @example
-   * // 預覽用（快，可用快取）
+   * 預覽用（快，可用快取）
    * const { ok, chain } = await ApprovalRouting.buildChain('yamada');
    *
-   * // Submit 用（慢一點，但保證資料最新）
+   * Submit 用（慢一點，但保證資料最新）
    * const { ok, chain } = await ApprovalRouting.buildChain('yamada', { forceFresh: true });
    * event.record.approver_chain.value = chain;
    */
@@ -172,7 +172,7 @@
       return { ok: true, chain, error: null };
 
     } catch (err) {
-      return { ok: false, chain: [], error: err.message };
+      return { ok: false, chain: [], error: err.message ?? String(err) };
     }
   };
 
