@@ -18,9 +18,8 @@
   const { ROLE_FIELDS: F, ROLE_ID_PREFIX, APP_ID } = window.ApprovalRouting.Config;
   const { safeHandler, kintoneApi } = window.ApprovalRouting.Utils;
 
-  /** 對 HR 隱藏代碼欄位 */
+  /** 隱藏純代碼欄位（role_id 保留顯示但鎖定，next_role_id 由下拉 UI 取代） */
   const hideCodeFields = () => {
-    kintone.app.record.setFieldShown(F.ROLE_ID, false);
     kintone.app.record.setFieldShown(F.NEXT_ROLE_ID, false);
   };
 

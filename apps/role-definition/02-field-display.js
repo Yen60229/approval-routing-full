@@ -4,6 +4,7 @@
  * 【影響的欄位】
  *   - holder_group: holder_type=指定群組 時顯示，否則隱藏
  *   - holder_user:  holder_type=指定個人 時顯示，否則隱藏
+ *   - 索引頁 holder_user 欄標題：改為「簽核者」；群組記錄填入群組名稱
  *
  * 【依賴】
  *   - core/01-config.js（Config.ROLE_FIELDS, Config.HOLDER_TYPE_OPTIONS）
@@ -11,6 +12,7 @@
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-04-18  Jimmy/Claude  新增 detail.show 條件顯示；index.show 統一簽核者欄
  */
 (() => {
   'use strict';
@@ -43,16 +45,22 @@
 
   // --- 事件綁定 ---
 
-  // 新增 / 編輯頁載入：根據目前值切換
+  // 新增頁載入：清空非使用中欄位 + 切換顯示
   kintone.events.on(
-    [
-      'app.record.create.show',
-      'app.record.edit.show',
-      'app.record.index.edit.show',
-    ],
+    ['app.record.create.show'],
     safeHandler(async (event) => {
       const holderType = event.record[F.HOLDER_TYPE].value;
-      // show 事件中用 setTimeout 確保 setFieldShown 在 return 之後執行
+      clearInactiveHolder(event.record, holderType);
+      setTimeout(() => toggleHolderFields(holderType), 0);
+      return event;
+    })
+  );
+
+  // 編輯頁載入：只切換顯示，保留既有值
+  kintone.events.on(
+    ['app.record.edit.show', 'app.record.index.edit.show'],
+    safeHandler(async (event) => {
+      const holderType = event.record[F.HOLDER_TYPE].value;
       setTimeout(() => toggleHolderFields(holderType), 0);
       return event;
     })
@@ -69,6 +77,65 @@
       const holderType = event.record[F.HOLDER_TYPE].value;
       clearInactiveHolder(event.record, holderType);
       toggleHolderFields(holderType);
+      return event;
+    })
+  );
+
+  // 詳情頁：根據 holder_type 只顯示對應欄位
+  kintone.events.on(
+    ['app.record.detail.show'],
+    safeHandler(async (event) => {
+      toggleHolderFields(event.record[F.HOLDER_TYPE].value);
+      return event;
+    })
+  );
+
+  /**
+   * 索引頁「簽核者」欄整理：
+   *   1. holder_user 欄標題：「簽核者（個人）」→「簽核者」
+   *   2. 群組記錄：將 holder_group 名稱填入 holder_user 欄（原本空白）
+   * @param {Object[]} records - event.records
+   */
+  /** 注入索引頁樣式（只注入一次） */
+  const injectIndexStyle = () => {
+    if (document.getElementById('ar-index-style')) return;
+    const style = document.createElement('style');
+    style.id = 'ar-index-style';
+    style.textContent = '.recordlist-cell-gaia { vertical-align: middle !important; }';
+    document.head.appendChild(style);
+  };
+
+  const renderIndexHolderColumn = (records) => {
+    injectIndexStyle();
+
+    // 1. 標題改名（用 innerText 偵測、innerHTML 替換，保留排序等子元素）
+    document.querySelectorAll('th').forEach((th) => {
+      if (th.innerText.includes('簽核者（個人）')) {
+        th.innerHTML = th.innerHTML.replace('簽核者（個人）', '簽核者');
+      }
+    });
+
+    // 2. 用 getFieldElements 精準取得 holder_user 各列的 cell
+    const userCells = kintone.app.getFieldElements(F.HOLDER_USER);
+    if (!userCells) return;
+
+    records.forEach((rec, idx) => {
+      if (rec[F.HOLDER_TYPE].value !== HT.GROUP) return;
+      const groupVal = rec[F.HOLDER_GROUP].value;
+      if (!groupVal || groupVal.length === 0) return;
+      const cell = userCells[idx];
+      if (!cell) return;
+      cell.innerHTML = groupVal.map((g) =>
+        `<span class="recordlist-entityname-gaia"><img src="https://static.cybozu.com/contents/k/image/argo/form/userselect/group16.png" width="16" height="16"><span>${g.name}</span></span>`
+      ).join('');
+    });
+  };
+
+  // 索引頁：統一「簽核者」欄顯示
+  kintone.events.on(
+    ['app.record.index.show'],
+    safeHandler(async (event) => {
+      setTimeout(() => renderIndexHolderColumn(event.records), 0);
       return event;
     })
   );
