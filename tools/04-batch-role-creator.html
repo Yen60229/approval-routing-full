@@ -148,9 +148,14 @@ function saveConfig() {
     return;
   }
 
-  localStorage.setItem('ar_subdomain', subdomain);
-  localStorage.setItem('ar_apiToken',  apiToken);
-  localStorage.setItem('ar_unitName',  unitName);
+  try {
+    localStorage.setItem('ar_subdomain', subdomain);
+    localStorage.setItem('ar_apiToken',  apiToken);
+    localStorage.setItem('ar_unitName',  unitName);
+  } catch (e) {
+    alert('localStorage 儲存失敗（可能是隱私模式）：' + e.message);
+    return;
+  }
 
   document.getElementById('configStatus').textContent = '⏳ 載入群組中…';
   loadGroups();
