@@ -302,6 +302,72 @@ function onHolderTypeChange(select, idx) {
   document.getElementById(`holder-grp-${idx}`).style.display = isGroup ? ''     : 'none';
 }
 
+// ─── role_id ──────────────────────────────────────────────────────────────────
+
+function generateRoleIds(count) {
+  const now = new Date();
+  const ts = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0'),
+  ].join('');
+  return Array.from({ length: count }, (_, i) =>
+    `ROLE_${ts}_${String(i + 1).padStart(3, '0')}`,
+  );
+}
+
+// ─── Build Records ────────────────────────────────────────────────────────────
+
+function buildRecords() {
+  const unitName = document.getElementById('unitName').value.trim()
+                || localStorage.getItem('ar_unitName') || '';
+  const rows    = [...document.querySelectorAll('#roleTableBody tr')];
+  const roleIds = generateRoleIds(rows.length);
+
+  return rows.map((row, idx) => {
+    const title      = row.dataset.title;
+    const holderType = row.querySelector('.holder-type-select').value;
+
+    const record = {
+      role_id:     { value: roleIds[idx] },
+      unit_name:   { value: unitName },
+      title_level: { value: title },
+      holder_type: { value: holderType },
+      is_active:   { value: ['啟用中'] },
+    };
+
+    if (holderType === '指定個人') {
+      const code = row.querySelector('.holder-user-select').value;
+      record.holder_user = { value: [{ code }] };
+    } else {
+      const code = row.querySelector('.holder-group-input').value.trim();
+      record.holder_group = { value: [{ code }] };
+    }
+
+    return record;
+  });
+}
+
+// ─── Preview ──────────────────────────────────────────────────────────────────
+
+function previewJSON() {
+  const records = buildRecords();
+  document.getElementById('previewContent').textContent =
+    JSON.stringify({ app: 685, records }, null, 2);
+  document.getElementById('previewModal').style.display = '';
+}
+
+function closePreview() {
+  document.getElementById('previewModal').style.display = 'none';
+}
+
+function closePreviewOnBackdrop(event) {
+  if (event.target === document.getElementById('previewModal')) closePreview();
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 loadSavedConfig();
 </script>
