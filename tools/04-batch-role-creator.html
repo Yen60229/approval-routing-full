@@ -207,6 +207,51 @@ function rebuildGroupDatalist() {
     .join('');
 }
 
+// ─── CSV ──────────────────────────────────────────────────────────────────────
+
+function loadCSVFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    document.getElementById('csvInput').value = e.target.result;
+    parseCSV();
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function parseCSV() {
+  const raw = document.getElementById('csvInput').value.trim();
+  if (!raw) { alert('請輸入 CSV 資料'); return; }
+
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) { alert('CSV 內容為空'); return; }
+
+  const firstLower = lines[0].toLowerCase();
+  const isHeader = ['code', 'title', '員工', '職稱', '代碼'].some(k => firstLower.includes(k));
+  const dataLines = isHeader ? lines.slice(1) : lines;
+
+  const rows = dataLines.map(line => {
+    const parts = line.split(',').map(p => p.trim().replace(/^"|"$/g, ''));
+    return { code: parts[0] || '', title: parts[1] || '' };
+  }).filter(r => r.code && r.title);
+
+  if (!rows.length) {
+    alert('CSV 解析後無有效資料，請確認格式為 code,title（每行一筆）');
+    return;
+  }
+
+  const titleMap = new Map();
+  rows.forEach(({ code, title }) => {
+    if (!titleMap.has(title)) titleMap.set(title, []);
+    if (!titleMap.get(title).includes(code)) titleMap.get(title).push(code);
+  });
+
+  _uniqueTitles = [...titleMap.entries()].map(([title, codes]) => ({ title, codes }));
+
+  renderTable();
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 loadSavedConfig();
 </script>
