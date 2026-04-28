@@ -167,6 +167,46 @@ function loadSavedConfig() {
   document.getElementById('unitName').value  = localStorage.getItem('ar_unitName')  || '';
 }
 
+// ─── Groups ───────────────────────────────────────────────────────────────────
+
+async function loadGroups() {
+  const statusEl = document.getElementById('configStatus');
+  try {
+    let offset = 0;
+    const SIZE = 100;
+    _groups = [];
+
+    while (true) {
+      const resp = await fetch(
+        `${getBase()}/k/v1/groups.json?offset=${offset}&size=${SIZE}`,
+        { headers: getHeaders() },
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      const batch = data.groups || [];
+      _groups.push(...batch.map(g => ({ code: g.code, name: g.name })));
+      if (batch.length < SIZE) break;
+      offset += SIZE;
+    }
+
+    rebuildGroupDatalist();
+    statusEl.textContent = `✅ 已載入 ${_groups.length} 個群組`;
+  } catch (err) {
+    statusEl.textContent = `❌ 載入群組失敗：${err.message}`;
+    console.error('[batch-role-creator] loadGroups error', err);
+  }
+}
+
+function rebuildGroupDatalist() {
+  const dl = document.getElementById('group-datalist');
+  dl.innerHTML = _groups
+    .map(g => `<option value="${g.code}">${g.name}（${g.code}）</option>`)
+    .join('');
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 loadSavedConfig();
 </script>
