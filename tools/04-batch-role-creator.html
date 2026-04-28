@@ -1,3 +1,18 @@
+<!--
+  批量建立角色工具 — App 685 Batch Role Creator
+
+  【影響】
+    寫入 App 685（角色定義表）records：role_id / unit_name / title_level /
+    holder_type / holder_user / holder_group / is_active
+
+  【依賴】
+    Vanilla JS（ES2020+）、localStorage、kintone REST API（groups + records）
+
+  【變更履歷】
+    2026-04-28  Jimmy/Claude  初版建立
+    2026-04-28  Jimmy/Claude  安全修正：HTML 跳脫、群組空值守衛、毫秒 role_id、
+                              BOM 移除、classList 一致化、雙重送出防護
+-->
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -98,7 +113,7 @@
   </table>
   <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
     <button class="btn-secondary" onclick="previewJSON()">預覽 JSON</button>
-    <button class="btn-success" onclick="submitBatch()">送出建立</button>
+    <button id="submitBtn" class="btn-success" onclick="submitBatch()">送出建立</button>
   </div>
   <div id="status"></div>
 </div>
@@ -121,6 +136,14 @@
 // ─── 狀態 ────────────────────────────────────────────────────────────────────
 let _groups      = [];  // [{ code, name }]
 let _uniqueTitles = []; // [{ title, codes[] }]
+
+// ─── HTML Escape（定義在最前面供所有 innerHTML 操作共用）────────────────────
+
+const _esc = s => String(s)
+  .replace(/&/g, '&amp;')
+  .replace(/"/g, '&quot;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
 
 // ─── API Helpers ──────────────────────────────────────────────────────────────
 
@@ -203,7 +226,7 @@ async function loadGroups() {
 function rebuildGroupDatalist() {
   const dl = document.getElementById('group-datalist');
   dl.innerHTML = _groups
-    .map(g => `<option value="${g.code}">${g.name}（${g.code}）</option>`)
+    .map(g => `<option value="${_esc(g.code)}">${_esc(g.name)}（${_esc(g.code)}）</option>`)
     .join('');
 }
 
@@ -254,12 +277,6 @@ function parseCSV() {
 
 // ─── Table ────────────────────────────────────────────────────────────────────
 
-const _esc = s => String(s)
-  .replace(/&/g, '&amp;')
-  .replace(/"/g, '&quot;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;');
-
 function renderTable() {
   const unitName = document.getElementById('unitName').value.trim()
                 || localStorage.getItem('ar_unitName') || '';
@@ -271,7 +288,7 @@ function renderTable() {
 
     return `
       <tr data-idx="${idx}" data-title="${_esc(title)}">
-        <td><code>${roleName}</code></td>
+        <td><code>${_esc(roleName)}</code></td>
         <td>
           <select class="holder-type-select"
                   onchange="onHolderTypeChange(this, ${idx})"
@@ -312,6 +329,8 @@ function onHolderTypeChange(select, idx) {
 
 function generateRoleIds(count) {
   const now = new Date();
+  // 時間戳 + 4 碼隨機英數，防止同一秒內重複送出產生相同 ID
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
   const ts = [
     now.getFullYear(),
     String(now.getMonth() + 1).padStart(2, '0'),
@@ -320,6 +339,7 @@ function generateRoleIds(count) {
     String(now.getMinutes()).padStart(2, '0'),
     String(now.getSeconds()).padStart(2, '0'),
     String(now.getMilliseconds()).padStart(3, '0'),
+    rand,
   ].join('');
   return Array.from({ length: count }, (_, i) =>
     `ROLE_${ts}_${String(i + 1).padStart(3, '0')}`,
@@ -371,7 +391,13 @@ function buildRecords() {
 // ─── Preview ──────────────────────────────────────────────────────────────────
 
 function previewJSON() {
-  const records = buildRecords();
+  let records;
+  try {
+    records = buildRecords();
+  } catch (err) {
+    alert(err.message);
+    return;
+  }
   document.getElementById('previewContent').textContent =
     JSON.stringify({ app: 685, records }, null, 2);
   document.getElementById('previewModal').style.display = '';
@@ -388,6 +414,9 @@ function closePreviewOnBackdrop(event) {
 // ─── Submit ───────────────────────────────────────────────────────────────────
 
 async function submitBatch() {
+  const submitBtn = document.getElementById('submitBtn');
+  if (submitBtn.disabled) return; // 防止雙重送出
+
   let records;
   try {
     records = buildRecords();
@@ -407,7 +436,9 @@ async function submitBatch() {
 
   const statusEl = document.getElementById('status');
   statusEl.classList.remove('status-success', 'status-error');
-  statusEl.style.display = '';
+  statusEl.style.display = 'block';
+  submitBtn.disabled = true;
+  submitBtn.textContent = '送出中…';
 
   let created = 0;
   for (let i = 0; i < chunks.length; i++) {
@@ -427,16 +458,20 @@ async function submitBatch() {
 
       created += chunks[i].length;
     } catch (err) {
-      statusEl.className = 'status-error';
+      statusEl.classList.add('status-error');
       statusEl.textContent =
         `❌ 第 ${i + 1} 批失敗（已建立 ${created} 筆）：${err.message}`;
       console.error('[batch-role-creator] submitBatch error', err);
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送出建立';
       return;
     }
   }
 
-  statusEl.className = 'status-success';
+  statusEl.classList.add('status-success');
   statusEl.textContent = `✅ 成功建立 ${created} 筆角色記錄！前往 App 685 確認。`;
+  submitBtn.disabled = false;
+  submitBtn.textContent = '送出建立';
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
