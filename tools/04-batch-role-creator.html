@@ -368,6 +368,62 @@ function closePreviewOnBackdrop(event) {
   if (event.target === document.getElementById('previewModal')) closePreview();
 }
 
+// ─── Submit ───────────────────────────────────────────────────────────────────
+
+async function submitBatch() {
+  const records = buildRecords();
+  if (!records.length) { alert('沒有要建立的記錄'); return; }
+
+  const emptyGroup = records.find(
+    r => r.holder_type.value === '指定群組' && !r.holder_group?.value[0]?.code,
+  );
+  if (emptyGroup) {
+    alert(`「${emptyGroup.title_level.value}」的群組代碼未填寫，請先填入再送出`);
+    return;
+  }
+
+  if (!confirm(`確認建立 ${records.length} 筆角色記錄？`)) return;
+
+  const CHUNK = 100;
+  const chunks = [];
+  for (let i = 0; i < records.length; i += CHUNK) {
+    chunks.push(records.slice(i, i + CHUNK));
+  }
+
+  const statusEl = document.getElementById('status');
+  statusEl.className = '';
+  statusEl.style.display = '';
+
+  let created = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    statusEl.textContent = `⏳ 送出中… ${created} / ${records.length} 筆`;
+
+    try {
+      const resp = await fetch(`${getBase()}/k/v1/records.json`, {
+        method:  'POST',
+        headers: getHeaders(),
+        body:    JSON.stringify({ app: 685, records: chunks[i] }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${resp.status}`);
+      }
+
+      created += chunks[i].length;
+    } catch (err) {
+      statusEl.className = 'status-error';
+      statusEl.textContent =
+        `❌ 第 ${i + 1} 批失敗（已建立 ${created} 筆）：${err.message}`;
+      console.error('[batch-role-creator] submitBatch error', err);
+      return;
+    }
+  }
+
+  statusEl.className = 'status-success';
+  statusEl.textContent = `✅ 成功建立 ${created} 筆角色記錄！前往 App 685 確認。`;
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 loadSavedConfig();
 </script>
