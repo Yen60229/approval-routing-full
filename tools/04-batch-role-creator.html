@@ -221,7 +221,7 @@ function loadCSVFile(event) {
 }
 
 function parseCSV() {
-  const raw = document.getElementById('csvInput').value.trim();
+  const raw = document.getElementById('csvInput').value.trim().replace(/^﻿/, '');
   if (!raw) { alert('請輸入 CSV 資料'); return; }
 
   const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -254,6 +254,12 @@ function parseCSV() {
 
 // ─── Table ────────────────────────────────────────────────────────────────────
 
+const _esc = s => String(s)
+  .replace(/&/g, '&amp;')
+  .replace(/"/g, '&quot;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
 function renderTable() {
   const unitName = document.getElementById('unitName').value.trim()
                 || localStorage.getItem('ar_unitName') || '';
@@ -261,10 +267,10 @@ function renderTable() {
 
   tbody.innerHTML = _uniqueTitles.map(({ title, codes }, idx) => {
     const roleName = unitName ? `${unitName}_${title}` : title;
-    const codeOpts = codes.map(c => `<option value="${c}">${c}</option>`).join('');
+    const codeOpts = codes.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
 
     return `
-      <tr data-idx="${idx}" data-title="${title}">
+      <tr data-idx="${idx}" data-title="${_esc(title)}">
         <td><code>${roleName}</code></td>
         <td>
           <select class="holder-type-select"
@@ -313,6 +319,7 @@ function generateRoleIds(count) {
     String(now.getHours()).padStart(2, '0'),
     String(now.getMinutes()).padStart(2, '0'),
     String(now.getSeconds()).padStart(2, '0'),
+    String(now.getMilliseconds()).padStart(3, '0'),
   ].join('');
   return Array.from({ length: count }, (_, i) =>
     `ROLE_${ts}_${String(i + 1).padStart(3, '0')}`,
@@ -326,6 +333,16 @@ function buildRecords() {
                 || localStorage.getItem('ar_unitName') || '';
   const rows    = [...document.querySelectorAll('#roleTableBody tr')];
   const roleIds = generateRoleIds(rows.length);
+
+  const emptyGroupRow = rows.find((row) => {
+    const ht = row.querySelector('.holder-type-select').value;
+    const gc = row.querySelector('.holder-group-input')?.value.trim();
+    return ht === '指定群組' && !gc;
+  });
+  if (emptyGroupRow) {
+    const t = emptyGroupRow.dataset.title;
+    throw new Error(`「${t}」的群組代碼未填寫`);
+  }
 
   return rows.map((row, idx) => {
     const title      = row.dataset.title;
@@ -371,16 +388,14 @@ function closePreviewOnBackdrop(event) {
 // ─── Submit ───────────────────────────────────────────────────────────────────
 
 async function submitBatch() {
-  const records = buildRecords();
-  if (!records.length) { alert('沒有要建立的記錄'); return; }
-
-  const emptyGroup = records.find(
-    r => r.holder_type.value === '指定群組' && !r.holder_group?.value[0]?.code,
-  );
-  if (emptyGroup) {
-    alert(`「${emptyGroup.title_level.value}」的群組代碼未填寫，請先填入再送出`);
+  let records;
+  try {
+    records = buildRecords();
+  } catch (err) {
+    alert(err.message);
     return;
   }
+  if (!records.length) { alert('沒有要建立的記錄'); return; }
 
   if (!confirm(`確認建立 ${records.length} 筆角色記錄？`)) return;
 
@@ -391,7 +406,7 @@ async function submitBatch() {
   }
 
   const statusEl = document.getElementById('status');
-  statusEl.className = '';
+  statusEl.classList.remove('status-success', 'status-error');
   statusEl.style.display = '';
 
   let created = 0;
