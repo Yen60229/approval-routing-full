@@ -252,6 +252,56 @@ function parseCSV() {
   renderTable();
 }
 
+// ─── Table ────────────────────────────────────────────────────────────────────
+
+function renderTable() {
+  const unitName = document.getElementById('unitName').value.trim()
+                || localStorage.getItem('ar_unitName') || '';
+  const tbody = document.getElementById('roleTableBody');
+
+  tbody.innerHTML = _uniqueTitles.map(({ title, codes }, idx) => {
+    const roleName = unitName ? `${unitName}_${title}` : title;
+    const codeOpts = codes.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    return `
+      <tr data-idx="${idx}" data-title="${title}">
+        <td><code>${roleName}</code></td>
+        <td>
+          <select class="holder-type-select"
+                  onchange="onHolderTypeChange(this, ${idx})"
+                  style="width:100%">
+            <option value="指定個人">指定個人</option>
+            <option value="指定群組">指定群組</option>
+          </select>
+        </td>
+        <td>
+          <div id="holder-ind-${idx}">
+            <select class="holder-user-select" style="width:100%">
+              ${codeOpts}
+            </select>
+          </div>
+          <div id="holder-grp-${idx}" style="display:none">
+            <input type="text"
+                   class="holder-group-input"
+                   list="group-datalist"
+                   placeholder="輸入群組代碼或名稱…"
+                   style="width:100%" />
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  document.getElementById('sec-table').style.display = '';
+  document.getElementById('sec-table').scrollIntoView({ behavior: 'smooth' });
+}
+
+function onHolderTypeChange(select, idx) {
+  const isGroup = select.value === '指定群組';
+  document.getElementById(`holder-ind-${idx}`).style.display = isGroup ? 'none' : '';
+  document.getElementById(`holder-grp-${idx}`).style.display = isGroup ? ''     : 'none';
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 loadSavedConfig();
 </script>
