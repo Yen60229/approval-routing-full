@@ -117,6 +117,53 @@
 
 <script>
 'use strict';
+
+// ─── 狀態 ────────────────────────────────────────────────────────────────────
+let _groups      = [];  // [{ code, name }]
+let _uniqueTitles = []; // [{ title, codes[] }]
+
+// ─── API Helpers ──────────────────────────────────────────────────────────────
+
+function getBase() {
+  const sub = localStorage.getItem('ar_subdomain') || '';
+  return `https://${sub}.cybozu.com`;
+}
+
+function getHeaders() {
+  return {
+    'X-Cybozu-API-Token': localStorage.getItem('ar_apiToken') || '',
+    'Content-Type': 'application/json',
+  };
+}
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+function saveConfig() {
+  const subdomain = document.getElementById('subdomain').value.trim();
+  const apiToken  = document.getElementById('apiToken').value.trim();
+  const unitName  = document.getElementById('unitName').value.trim();
+
+  if (!subdomain || !apiToken || !unitName) {
+    alert('請填寫所有設定欄位（子網域、API Token、單位名稱）');
+    return;
+  }
+
+  localStorage.setItem('ar_subdomain', subdomain);
+  localStorage.setItem('ar_apiToken',  apiToken);
+  localStorage.setItem('ar_unitName',  unitName);
+
+  document.getElementById('configStatus').textContent = '⏳ 載入群組中…';
+  loadGroups();
+}
+
+function loadSavedConfig() {
+  document.getElementById('subdomain').value = localStorage.getItem('ar_subdomain') || '';
+  document.getElementById('apiToken').value  = localStorage.getItem('ar_apiToken')  || '';
+  document.getElementById('unitName').value  = localStorage.getItem('ar_unitName')  || '';
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+loadSavedConfig();
 </script>
 </body>
 </html>
