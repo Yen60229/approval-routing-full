@@ -6,9 +6,9 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P1** — 角色定義表 HR 介面迭代中（App 685 已建立，JS 待上傳測試）
-- **下一步動作**:上傳 `apps/role-definition/` 下全部 6 支 JS 至 App 685（含新增的 `06-edit-layout.js`），在瀏覽器驗證所有功能
-- **最後更新**:2026-04-19
+- **當前 Phase**:**P1** — 角色定義表 HR 介面（7 支 JS 完成，待上傳 kintone 完整驗收）
+- **下一步動作**:上傳 `apps/role-definition/` 下全部 7 支 JS 至 App 685，在瀏覽器驗證所有功能；另需確認 kintone 後台已完成 role_name 計算欄位設定
+- **最後更新**:2026-04-28
 
 ---
 
@@ -53,7 +53,16 @@
   - [x] 解除編輯頁 748px 寬度限制
   - [x] 注入「簽核者設定」分區標題
   - [x] 注入「簽核鏈 & 下一關設定」分區標題
-- [ ] **上傳全部 6 支 JS 至 App 685，在 kintone 瀏覽器完整驗證**
+- [x] `apps/role-definition/07-role-name-selector.js` — unit_name/title_level 詳情頁隱藏 + 送出驗證 ✅ 2026-04-28
+  - [x] detail.show 隱藏 unit_name / title_level（role_name 計算結果即足夠）
+  - [x] submit 驗證：unit_name + title_level 均不可為空
+  - [x] `core/01-config.js` 新增 UNIT_NAME、TITLE_LEVEL 欄位代碼及 TITLE_LEVEL_OPTIONS ✅ 2026-04-28
+  - [ ] **kintone 後台前置條件**（Jimmy 手動操作）
+    - [ ] App 685 新增 `unit_name` 下拉式選單欄位（IT 維護選項）
+    - [ ] App 685 新增 `title_level` 下拉式選單欄位（固定六選項）
+    - [ ] 現有記錄資料遷移：role_name 拆解填入 unit_name + title_level
+    - [ ] `role_name` 改為計算欄位，公式 `unit_name & "_" & title_level`
+- [ ] **上傳全部 7 支 JS 至 App 685，在 kintone 瀏覽器完整驗證**
   - [ ] 新增頁：role_id 自動產生、兩欄位隱藏、分區標題顯示
   - [ ] 新增頁：holder_type 切換 → group/user 欄位條件顯示
   - [ ] 新增頁：next_role_id 下拉 UI 顯示、切換後 Timeline 即時更新
@@ -115,6 +124,7 @@
 | P0（建表） | 2026-04-18 | App 685/686 建立，App ID 寫入 config |
 | P1（程式碼 v1） | 2026-04-14 | 初版 JS 五支 |
 | P1（程式碼 v2） | 2026-04-19 | 多輪迭代：Timeline UI、Loading spinner、群組成員顯示、版面美化（新增第六支 06-edit-layout.js）、清除殘留 holder、同步 change 事件 |
+| P1（程式碼 v3） | 2026-04-28 | 新增 07-role-name-selector.js（unit_name/title_level 詳情頁隱藏 + 送出驗證）；config 新增兩欄位代碼 + TITLE_LEVEL_OPTIONS |
 | P2（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
 | P3（程式碼） | 2026-04-19 | 已整合入 P1 的 04-chain-preview.js，無獨立待辦 |
 | P4（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
