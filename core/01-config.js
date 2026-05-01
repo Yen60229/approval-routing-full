@@ -9,6 +9,8 @@
  *
  * 【變更履歷】
  *   2026-04-14  Jimmy/Claude  初版建立
+ *   2026-05-01  Jimmy/Claude  移除 TITLE_LEVEL_OPTIONS 硬編碼，改由各使用者
+ *                              透過 kintone.app.getFormFields() 動態讀取選項
  */
 (() => {
   'use strict';
@@ -51,11 +53,6 @@
     ALL: '全員會簽',
   });
 
-  /** title_level 固定職級選項（由低至高） */
-  const TITLE_LEVEL_OPTIONS = Object.freeze([
-    '課長', '次長', '部長', '部門長', '本部長', '總經理',
-  ]);
-
   /** 員工起點對照表欄位代碼 */
   const ENTRY_FIELDS = Object.freeze({
     EMPLOYEE:       'employee',
@@ -85,7 +82,6 @@
     HOLDER_TYPE_OPTIONS,
     CHECKBOX,
     SIGNING_MODE_OPTIONS,
-    TITLE_LEVEL_OPTIONS,
     ENTRY_FIELDS,
     CHAIN_FIELDS,
     ROLE_ID_PREFIX,

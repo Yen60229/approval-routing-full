@@ -8,7 +8,7 @@
 
 - **當前 Phase**:**P1** — 角色定義表 HR 介面（7 支 JS 完成，待上傳 kintone 完整驗收）
 - **下一步動作**:上傳 `apps/role-definition/` 下全部 7 支 JS 至 App 685，在瀏覽器驗證所有功能；另需確認 kintone 後台已完成 role_name 計算欄位設定
-- **最後更新**:2026-04-28
+- **最後更新**:2026-05-01（unit_name 改為動態下拉、移除 TITLE_LEVEL_OPTIONS 硬編碼）
 
 ---
 
@@ -56,7 +56,8 @@
 - [x] `apps/role-definition/07-role-name-selector.js` — unit_name/title_level 詳情頁隱藏 + 送出驗證 ✅ 2026-04-28
   - [x] detail.show 隱藏 unit_name / title_level（role_name 計算結果即足夠）
   - [x] submit 驗證：unit_name + title_level 均不可為空
-  - [x] `core/01-config.js` 新增 UNIT_NAME、TITLE_LEVEL 欄位代碼及 TITLE_LEVEL_OPTIONS ✅ 2026-04-28
+  - [x] `core/01-config.js` 新增 UNIT_NAME、TITLE_LEVEL 欄位代碼 ✅ 2026-04-28
+  - [x] **2026-05-01 重構**：移除 `TITLE_LEVEL_OPTIONS` 硬編碼，`tools/04-batch-role-creator.js` 改為呼叫 `kintone.app.getFormFields()` 同步載入 `unit_name` + `title_level` 兩個下拉欄位選項；任一欄位非下拉 / 選項為空時 SweetAlert 報錯停止流程
   - [ ] **kintone 後台前置條件**（Jimmy 手動操作）
     - [ ] App 685 新增 `unit_name` 下拉式選單欄位（IT 維護選項）
     - [ ] App 685 新增 `title_level` 下拉式選單欄位（固定六選項）
@@ -125,6 +126,7 @@
 | P1（程式碼 v1） | 2026-04-14 | 初版 JS 五支 |
 | P1（程式碼 v2） | 2026-04-19 | 多輪迭代：Timeline UI、Loading spinner、群組成員顯示、版面美化（新增第六支 06-edit-layout.js）、清除殘留 holder、同步 change 事件 |
 | P1（程式碼 v3） | 2026-04-28 | 新增 07-role-name-selector.js（unit_name/title_level 詳情頁隱藏 + 送出驗證）；config 新增兩欄位代碼 + TITLE_LEVEL_OPTIONS |
+| P1（程式碼 v4） | 2026-05-01 | 移除 `TITLE_LEVEL_OPTIONS` 硬編碼，`tools/04-batch-role-creator.js` 改為動態載入 unit_name + title_level 下拉選項；錯誤時 SweetAlert 報錯停止流程 |
 | P2（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
 | P3（程式碼） | 2026-04-19 | 已整合入 P1 的 04-chain-preview.js，無獨立待辦 |
 | P4（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
