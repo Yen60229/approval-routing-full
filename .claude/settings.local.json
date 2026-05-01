@@ -15,7 +15,16 @@
       "Read(//c/Users/User/.claude/**)",
       "Bash(npm show *)",
       "Bash(npm update *)",
-      "Bash(claude plugin *)"
+      "Bash(claude plugin *)",
+      "Bash(code --list-extensions)",
+      "Bash(git config *)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git fetch *)",
+      "Bash(git symbolic-ref *)",
+      "Bash(git reset *)",
+      "Bash(git branch *)"
     ]
-  }
+  },
+  "model": "claude-sonnet-4-6"
 }
