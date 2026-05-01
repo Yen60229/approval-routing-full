@@ -4,7 +4,7 @@
  * 功能：
  * 1. 讀取 CSV，支援「登入帳號 / 使用者名稱 / title_level」或舊版「code / title」欄位。
  * 2. 以 CSV 的登入帳號對應後台登入名稱、使用者名稱對應後台顯示名稱，解析成真正的使用者 code。
- * 3. 依每位同仁的完整組織組合分組；兼任多部門者只顯示一列，避免重複送出。
+ * 3. 依每位同仁每個所屬組織各建一列；兼任 N 個部門者顯示 N 列，每列可獨立設定。
  * 4. 每個組織卡片提供 unit_name 與 title_level 批次帶入，仍可逐列微調。
  * 5. 批次建立角色定義記錄，寫入 unit_name / title_level / holder_user / is_active。
  *
@@ -12,6 +12,7 @@
  *   2026-05-01  Jimmy/Claude  unit_name / title_level 兩個下拉選項一律從
  *                              kintone.app.getFormFields() 動態讀取，
  *                              欄位未設下拉或選項為空時 SweetAlert 報錯停止流程
+ *   2026-05-02  Jimmy/Claude  兼任多組織者改為每個組織各顯示一列，可獨立設定
  */
 (function () {
   'use strict';
@@ -472,8 +473,8 @@
           <div class="section" id="br-sec-table" style="display:none;">
             <h3>2. 卡片分組與批次帶入</h3>
             <p class="helper-text">
-              每張卡片代表一種「部門 / 部門組合」。同仁若兼任多部門，只會出現在其中一張卡片的一列；
-              卡片上方可一次帶入所有人的 <code>unit_name</code> 與 <code>title_level</code>，底下仍可個別調整。
+              每張卡片代表一個部門。同仁兼任 N 個部門 → 出現在 N 張卡片各一列，可分別設定不同的
+              <code>unit_name</code> 與 <code>title_level</code>；卡片上方可批次帶入，底下仍可逐列微調。
             </p>
             <div id="br-groups-container"></div>
 
@@ -693,16 +694,18 @@
 
         const user = resolveCsvUser(row, directory);
         const allOrgs = await fetchUserOrgs(user.code);
-        const groupKey = allOrgs.join(' / ');
 
-        resolvedUsers.push({
-          code: user.code,
-          loginAccount: user.code,
-          displayName: user.name || row.displayName || user.code,
-          titleLevel: row.titleLevel,
-          allOrgs,
-          groupKey,
-        });
+        // 每個所屬組織建立獨立一列，兼任 N 個單位 → N 行可分別設定
+        for (const singleOrg of allOrgs) {
+          resolvedUsers.push({
+            code: user.code,
+            loginAccount: user.code,
+            displayName: user.name || row.displayName || user.code,
+            titleLevel: row.titleLevel,
+            allOrgs,
+            groupKey: singleOrg,
+          });
+        }
       }
 
       const dedupedMap = new Map();
@@ -758,7 +761,7 @@
                 <div class="person-name">${_esc(user.displayName)}</div>
                 <div class="person-meta">
                   登入帳號：${_esc(user.loginAccount)}<br>
-                  組織：${_esc(user.allOrgs.join(' / '))}
+                  組織：${_esc(user.groupKey)}${user.allOrgs.length > 1 ? `（兼任 ${user.allOrgs.length} 個單位）` : ''}
                 </div>
               </td>
               <td>
