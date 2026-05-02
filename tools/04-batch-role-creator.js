@@ -14,6 +14,7 @@
  *                              欄位未設下拉或選項為空時 SweetAlert 報錯停止流程
  *   2026-05-02  Jimmy/Claude  兼任多組織者改為每個組織各顯示一列，可獨立設定
  *   2026-05-02  Jimmy/Claude  unit_name 改為 <input list="datalist"> 可打字搜尋，送出時驗證值必須在選項內
+ *   2026-05-02  Jimmy/Claude  每列加刪除按鈕；每張卡片加「＋ 新增人員」可打字搜尋後手動加列
  */
 (function () {
   'use strict';
@@ -47,6 +48,7 @@
   let _titleLevelOptions = [];
   let _unitNameOptions = [];
   let _allGroups = [];
+  let _rowUniqueId = 10000; // 動態新增列的唯一 ID 起點，避免與 CSV 解析列的 rIdx 衝突
 
   const _esc = (s) =>
     String(s == null ? '' : s)
@@ -105,6 +107,17 @@
   /** 產生共用 datalist（unit_name 搜尋輸入框用） */
   const buildUnitDatalist = () =>
     `<datalist id="br-unit-datalist">${_unitNameOptions.map((o) => `<option value="${_esc(o)}">`).join('')}</datalist>`;
+
+  /** 產生人員搜尋共用 datalist（value = loginCode，文字提示為顯示名稱） */
+  const buildPersonDatalist = () => {
+    if (!_userDirectory || !_userDirectory.users) {
+      return '<datalist id="br-person-datalist"></datalist>';
+    }
+    const options = _userDirectory.users
+      .map((u) => `<option value="${_esc(u.code)}">${_esc(u.name)}</option>`)
+      .join('');
+    return `<datalist id="br-person-datalist">${options}</datalist>`;
+  };
 
   /** 解析 kintone form field 的 options 物件 → 依 index 排序的 label 陣列 */
   function extractFieldOptions(field) {
@@ -426,6 +439,11 @@
         background: #e2e3e5;
         border: 1px solid #d6d8db;
         color: #383d41;
+      }
+      .new-row-person-info {
+        font-size: 12px;
+        margin-top: 4px;
+        line-height: 1.4;
       }
       #btn-open-batch-role {
         margin-left: 16px;
@@ -757,8 +775,9 @@
     const container = document.getElementById('br-groups-container');
     container.innerHTML = '';
 
-    // 注入共用 datalist（unit_name 搜尋輸入框用，選項在 _unitNameOptions 載入後才可用）
+    // 注入共用 datalist（unit_name / 人員搜尋用，選項於 loadFieldOptions / fetchAllUsers 完成後可用）
     container.insertAdjacentHTML('beforeend', buildUnitDatalist());
+    container.insertAdjacentHTML('beforeend', buildPersonDatalist());
 
     _parsedGroups.forEach((group, gIdx) => {
       const rowsHtml = group.users
@@ -832,6 +851,9 @@
               <td>
                 <code class="row-preview" id="preview-${gIdx}-${rIdx}">_</code>
               </td>
+              <td>
+                <button class="btn btn-danger btn-sm row-delete-btn" type="button" title="刪除此列">✕</button>
+              </td>
             </tr>
           `,
         )
@@ -845,6 +867,7 @@
                 ${_esc(group.orgName)}
                 <span class="badge">${group.users.length} 人</span>
               </div>
+              <button class="btn btn-primary btn-sm br-add-person" data-gidx="${gIdx}" type="button">＋ 新增人員</button>
             </div>
             <div class="org-bulk-controls">
               <div>
@@ -873,12 +896,13 @@
           <table class="org-table">
             <thead>
               <tr>
-                <th style="width:34%;">人員</th>
-                <th style="width:14%;">unit_name</th>
-                <th style="width:12%;">title_level</th>
-                <th style="width:12%;">holder_type</th>
-                <th style="width:18%;">holder</th>
+                <th style="width:30%;">人員</th>
+                <th style="width:13%;">unit_name</th>
+                <th style="width:11%;">title_level</th>
+                <th style="width:11%;">holder_type</th>
+                <th style="width:17%;">holder</th>
                 <th style="width:10%;">role_name 預覽</th>
+                <th style="width:5%;"></th>
               </tr>
             </thead>
             <tbody id="org-tbody-${gIdx}">
@@ -899,76 +923,194 @@
     _parsedGroups.forEach((_, gIdx) => updateOrgPreview(gIdx));
   }
 
+  /** 建立「新增人員」空白列 HTML（人員欄為搜尋輸入框） */
+  function buildNewPersonRowHtml(gIdx) {
+    const rId = _rowUniqueId++;
+    return `
+      <tr class="br-data-row" data-gidx="${gIdx}" data-ridx="${rId}" data-code="">
+        <td>
+          <input
+            type="text"
+            list="br-person-datalist"
+            class="row-person-search"
+            data-gidx="${gIdx}"
+            data-ridx="${rId}"
+            placeholder="輸入姓名或登入帳號搜尋"
+            autocomplete="off"
+          >
+          <div class="new-row-person-info" data-gidx="${gIdx}" data-ridx="${rId}"></div>
+        </td>
+        <td>
+          <input
+            type="text"
+            list="br-unit-datalist"
+            class="row-unit-select"
+            data-gidx="${gIdx}"
+            data-ridx="${rId}"
+            placeholder="輸入搜尋…"
+            autocomplete="off"
+          >
+        </td>
+        <td>
+          <select class="row-title-select" data-gidx="${gIdx}" data-ridx="${rId}">
+            ${buildTitleOptionsHtml('')}
+          </select>
+        </td>
+        <td>
+          <select class="row-holder-type-select" data-gidx="${gIdx}" data-ridx="${rId}">
+            <option value="${_esc(HOLDER_TYPE_USER)}" selected>${_esc(HOLDER_TYPE_USER)}</option>
+            <option value="${_esc(HOLDER_TYPE_GROUP)}">${_esc(HOLDER_TYPE_GROUP)}</option>
+          </select>
+        </td>
+        <td>
+          <div class="holder-target">
+            <div class="holder-person" data-role="holder-person" data-gidx="${gIdx}" data-ridx="${rId}">
+              （選人後自動填入）
+            </div>
+            <div class="holder-group-wrapper" data-role="holder-group-wrapper" data-gidx="${gIdx}" data-ridx="${rId}" style="display:none;">
+              <input type="text" class="holder-group-filter" data-gidx="${gIdx}" data-ridx="${rId}" placeholder="輸入幾個字搜尋群組">
+              <select class="holder-group-select" data-gidx="${gIdx}" data-ridx="${rId}">
+                <option value="">請選擇群組</option>
+              </select>
+              <div class="holder-hint">搜尋只用來篩選；實際 holder 必須從下拉選單選取，不能手寫。</div>
+            </div>
+          </div>
+        </td>
+        <td>
+          <code class="row-preview" id="preview-${gIdx}-${rId}">_</code>
+        </td>
+        <td>
+          <button class="btn btn-danger btn-sm row-delete-btn" type="button" title="刪除此列">✕</button>
+        </td>
+      </tr>
+    `;
+  }
+
+  /** 處理人員搜尋輸入：比對 _userDirectory，更新 data-code 及顯示確認/錯誤訊息 */
+  function handlePersonSearch(gIdx, rIdx, value) {
+    const tr = document.querySelector(`tr.br-data-row[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    const infoDiv = document.querySelector(`.new-row-person-info[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    const holderPersonEl = document.querySelector(`[data-role="holder-person"][data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+
+    if (!_userDirectory) return;
+
+    const term = normalize(value);
+    if (!term) {
+      if (tr) tr.dataset.code = '';
+      if (infoDiv) { infoDiv.textContent = ''; infoDiv.style.color = ''; }
+      if (holderPersonEl) holderPersonEl.textContent = '（選人後自動填入）';
+      return;
+    }
+
+    const user = _userDirectory.byCode.get(term) || _userDirectory.byName.get(term);
+    if (user) {
+      if (tr) tr.dataset.code = user.code;
+      if (infoDiv) {
+        infoDiv.style.color = '#27ae60';
+        infoDiv.textContent = `✓ ${user.name}（${user.code}）`;
+      }
+      if (holderPersonEl) holderPersonEl.textContent = `${user.code} / ${user.name}`;
+    } else {
+      if (tr) tr.dataset.code = '';
+      if (infoDiv) {
+        infoDiv.style.color = '#e74c3c';
+        infoDiv.textContent = '找不到使用者，請從建議清單選取';
+      }
+      if (holderPersonEl) holderPersonEl.textContent = '（選人後自動填入）';
+    }
+  }
+
+  /** 綁定單一列的所有事件（初始列 & 動態新增列共用） */
+  function bindSingleRowEvents(tr) {
+    const gIdx = tr.dataset.gidx;
+    const rIdx = tr.dataset.ridx;
+
+    const unitInput = tr.querySelector('.row-unit-select');
+    if (unitInput) {
+      unitInput.addEventListener('input', () => updateSinglePreview(gIdx, rIdx));
+    }
+
+    const titleSelect = tr.querySelector('.row-title-select');
+    if (titleSelect) {
+      titleSelect.addEventListener('change', () => updateSinglePreview(gIdx, rIdx));
+    }
+
+    const holderTypeSelect = tr.querySelector('.row-holder-type-select');
+    if (holderTypeSelect) {
+      holderTypeSelect.addEventListener('change', () => toggleHolderTarget(gIdx, rIdx));
+    }
+
+    const groupFilter = tr.querySelector('.holder-group-filter');
+    if (groupFilter) {
+      const refresh = () => refreshGroupOptions(gIdx, rIdx, groupFilter.value);
+      groupFilter.addEventListener('focus', refresh);
+      groupFilter.addEventListener('input', refresh);
+    }
+
+    const groupSelect = tr.querySelector('.holder-group-select');
+    if (groupSelect) {
+      groupSelect.addEventListener('focus', () => {
+        const filter = tr.querySelector('.holder-group-filter');
+        refreshGroupOptions(gIdx, rIdx, filter ? filter.value : '');
+      });
+    }
+
+    const personSearch = tr.querySelector('.row-person-search');
+    if (personSearch) {
+      personSearch.addEventListener('input', (e) => handlePersonSearch(gIdx, rIdx, e.target.value));
+    }
+
+    const deleteBtn = tr.querySelector('.row-delete-btn');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', () => tr.remove());
+    }
+
+    toggleHolderTarget(gIdx, rIdx);
+  }
+
+  /** 向指定 gIdx 卡片的 tbody 末端插入一列空白人員列，並綁定事件 */
+  function addPersonRow(gIdx) {
+    const tbody = document.getElementById(`org-tbody-${gIdx}`);
+    if (!tbody) return;
+    tbody.insertAdjacentHTML('beforeend', buildNewPersonRowHtml(gIdx));
+    const lastTr = tbody.querySelector('tr.br-data-row:last-child');
+    if (lastTr) {
+      bindSingleRowEvents(lastTr);
+      const searchInput = lastTr.querySelector('.row-person-search');
+      if (searchInput) searchInput.focus();
+    }
+  }
+
   function bindGroupRowEvents() {
-    document.querySelectorAll('.row-unit-select').forEach((input) => {
-      input.addEventListener('input', (event) => {
-        updateSinglePreview(event.target.dataset.gidx, event.target.dataset.ridx);
-      });
-    });
+    // 列級事件統一由 bindSingleRowEvents 處理（初始列 & 動態新增列共用邏輯）
+    document.querySelectorAll('tr.br-data-row').forEach(bindSingleRowEvents);
 
-    document.querySelectorAll('.row-title-select').forEach((select) => {
-      select.addEventListener('change', (event) => {
-        updateSinglePreview(event.target.dataset.gidx, event.target.dataset.ridx);
-      });
-    });
-
-    document.querySelectorAll('.row-holder-type-select').forEach((select) => {
-      select.addEventListener('change', (event) => {
-        toggleHolderTarget(event.target.dataset.gidx, event.target.dataset.ridx);
-      });
-    });
-
-    document.querySelectorAll('.holder-group-filter').forEach((input) => {
-      const updateMatches = () => {
-        refreshGroupOptions(input.dataset.gidx, input.dataset.ridx, input.value);
-      };
-
-      input.addEventListener('focus', updateMatches);
-      input.addEventListener('input', updateMatches);
-    });
-
-    document.querySelectorAll('.holder-group-select').forEach((select) => {
-      select.addEventListener('focus', (event) => {
-        const filterInput = document.querySelector(
-          `.holder-group-filter[data-gidx="${event.target.dataset.gidx}"][data-ridx="${event.target.dataset.ridx}"]`,
-        );
-        refreshGroupOptions(
-          event.target.dataset.gidx,
-          event.target.dataset.ridx,
-          filterInput ? filterInput.value : '',
-        );
-      });
-    });
-
+    // 卡片級：批次帶入 unit_name 輸入時重置按鈕文字
     document.querySelectorAll('.bulk-unit-select').forEach((input) => {
       input.addEventListener('input', (event) => {
         const gIdx = event.target.dataset.gidx;
         const button = document.querySelector(`.br-apply-group[data-gidx="${gIdx}"]`);
-        if (button) {
-          button.textContent = '套用全組';
-        }
+        if (button) button.textContent = '套用全組';
       });
     });
 
+    // 卡片級：批次帶入 title_level 切換時重置按鈕文字
     document.querySelectorAll('.bulk-title-select').forEach((select) => {
       select.addEventListener('change', (event) => {
         const gIdx = event.target.dataset.gidx;
         const button = document.querySelector(`.br-apply-group[data-gidx="${gIdx}"]`);
-        if (button) {
-          button.textContent = '套用全組';
-        }
+        if (button) button.textContent = '套用全組';
       });
     });
 
+    // 卡片級：套用全組
     document.querySelectorAll('.br-apply-group').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        const gIdx = event.currentTarget.dataset.gidx;
-        applyBulkToGroup(gIdx);
-      });
+      button.addEventListener('click', (event) => applyBulkToGroup(event.currentTarget.dataset.gidx));
     });
 
-    document.querySelectorAll('tr.br-data-row').forEach((row) => {
-      toggleHolderTarget(row.dataset.gidx, row.dataset.ridx);
+    // 卡片級：新增人員列
+    document.querySelectorAll('.br-add-person').forEach((btn) => {
+      btn.addEventListener('click', (event) => addPersonRow(event.currentTarget.dataset.gidx));
     });
   }
 
@@ -1135,15 +1277,21 @@
       const unitName = unitSelect ? unitSelect.value.trim() : '';
       const titleLevel = titleSelect ? titleSelect.value.trim() : '';
       const holderType = holderTypeSelect ? holderTypeSelect.value : HOLDER_TYPE_USER;
+      const nameDisplay = nameEl ? nameEl.textContent.trim() : code || '新增人員';
+
+      // 新增人員列：指定個人時必須已完成搜尋選取
+      if (holderType === HOLDER_TYPE_USER && !code) {
+        throw new Error(`「${nameDisplay}」尚未完成人員選取，請從搜尋清單選取使用者。`);
+      }
 
       if (!unitName) {
-        throw new Error(`「${nameEl ? nameEl.textContent : code}」的 unit_name 尚未填寫。`);
+        throw new Error(`「${nameDisplay}」的 unit_name 尚未填寫。`);
       }
       if (!_unitNameOptions.includes(unitName)) {
-        throw new Error(`「${nameEl ? nameEl.textContent : code}」的 unit_name「${unitName}」不在選項清單中，請從建議清單選取。`);
+        throw new Error(`「${nameDisplay}」的 unit_name「${unitName}」不在選項清單中，請從建議清單選取。`);
       }
       if (!titleLevel) {
-        throw new Error(`「${nameEl ? nameEl.textContent : code}」的 title_level 尚未選擇。`);
+        throw new Error(`「${nameDisplay}」的 title_level 尚未選擇。`);
       }
 
       const record = {
