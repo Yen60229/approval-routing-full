@@ -147,6 +147,15 @@
     }
   }
 
+  function formatKintoneError(error) {
+    const parts = [
+      error && error.message,
+      error && error.code ? `code=${error.code}` : '',
+      error && error.id ? `id=${error.id}` : '',
+    ].filter(Boolean);
+    return parts.join(' / ') || '未知錯誤';
+  }
+
   /** 從 App 685 動態載入 unit_name / title_level 兩個下拉欄位的選項。
    *  任一欄位非下拉、或選項為空 → SweetAlert 報錯並 throw，停止後續流程。 */
   async function loadFieldOptions() {
@@ -1342,25 +1351,29 @@
    */
   async function fetchMaxRoleNum() {
     const appId = kintone.app.getId();
+    console.log('[batch-role-creator] fetchMaxRoleNum appId:', appId);
+    if (!appId) throw new Error('kintone.app.getId() 回傳 null，請確認此 JS 已上傳至 App 685 的「自訂設定」');
     let maxNum = 0;
-    let offset = 0;
-    while (true) {
-      const resp = await kintone.api(kintone.api.url('/v1/records.json', true), 'GET', {
-        app: appId,
-        fields: ['role_id'],
-        query: `limit 500 offset ${offset}`,
-      });
-      const batch = Array.isArray(resp.records) ? resp.records : [];
-      batch.forEach((r) => {
-        const val = (r.role_id && r.role_id.value) || '';
-        if (/^ROLE_\d+$/.test(val)) {
-          const num = parseInt(val.slice(5), 10);
-          if (num > maxNum) maxNum = num;
-        }
-      });
-      if (batch.length < 500) break;
-      offset += 500;
+    const params = {
+      app: appId,
+      fields: ['role_id'],
+      query: 'order by role_id desc limit 500',
+    };
+    let resp;
+    try {
+      resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', params);
+    } catch (error) {
+      console.error('[batch-role-creator] fetchMaxRoleNum records API error', { params, error });
+      throw new Error(`讀取既有 role_id 失敗：${formatKintoneError(error)}。已改用與 01-role-form-init.js 相同的查詢格式，若仍失敗，請檢查 App 685 是否有「未套用表單變更」或 role_id 是否可用於排序。`);
     }
+    const batch = Array.isArray(resp.records) ? resp.records : [];
+    batch.forEach((r) => {
+      const val = (r.role_id && r.role_id.value) || '';
+      if (/^ROLE_\d+$/.test(val)) {
+        const num = parseInt(val.slice(5), 10);
+        if (num > maxNum) maxNum = num;
+      }
+    });
     return maxNum;
   }
 
@@ -1540,7 +1553,7 @@
       return;
     }
 
-    // 驗證
+    // 驗證（在 disable 按鈕前做，失敗直接 return，按鈕不卡）
     try {
       [...newRows, ...dirtyRows].forEach(validateRow);
     } catch (err) {
@@ -1550,66 +1563,61 @@
 
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '處理中…'; }
 
-    const appId = kintone.app.getId();
+    // 一律用 finally 恢復按鈕，確保任何例外都不會卡住
+    try {
+      const appId = kintone.app.getId();
+      console.log('[saveCard] appId:', appId);
+      if (!appId) {
+        throw new Error('kintone.app.getId() 回傳 null。請確認此 JS 已上傳至 App 685 的「自訂設定」，而非其他 App。');
+      }
 
-    // POST 新列
-    if (newRows.length) {
-      let startNum = 1;
-      try { startNum = (await fetchMaxRoleNum()) + 1; } catch (_) { /* 查不到從1開始 */ }
+      const apiUrl = kintone.api.url('/v1/records.json', true);
 
-      const roleIds = generateRoleIds(newRows.length, startNum);
-      const postRecords = newRows.map((tr, i) => {
-        const rec = buildRowRecord(tr);
-        rec.role_id = { value: roleIds[i] };
-        return rec;
-      });
+      // POST 新列
+      if (newRows.length) {
+        let startNum = 1;
+        try { startNum = (await fetchMaxRoleNum()) + 1; } catch (e) {
+          console.warn('[saveCard] fetchMaxRoleNum failed, starting from 1:', e.message);
+        }
 
-      try {
-        const resp = await kintone.api(kintone.api.url('/v1/records.json', true), 'POST', {
-          app: appId,
-          records: postRecords,
+        const roleIds = generateRoleIds(newRows.length, startNum);
+        // buildRowRecord 可能 throw，統一由外層 catch 接
+        const postRecords = newRows.map((tr, i) => {
+          const rec = buildRowRecord(tr);
+          rec.role_id = { value: roleIds[i] };
+          return rec;
         });
+        console.log('[saveCard] POST records[0]:', JSON.stringify(postRecords[0], null, 2));
+
+        const resp = await kintone.api(apiUrl, 'POST', { app: appId, records: postRecords });
         (resp.ids || []).forEach((id, i) => {
           newRows[i].dataset.recordId = id;
           newRows[i].dataset.dirty = '';
           updateRowStatus(newRows[i], 'saved');
         });
-      } catch (err) {
-        console.error('[saveCard] POST error', err);
-        alert(`建立失敗：${err.message || JSON.stringify(err)}`);
-        if (saveBtn) { saveBtn.disabled = false; }
-        updateCardStatus(gIdx);
-        return;
       }
-    }
 
-    // PUT dirty 列
-    if (dirtyRows.length) {
-      const putRecords = dirtyRows.map((tr) => ({
-        id: tr.dataset.recordId,
-        record: buildRowRecord(tr),
-      }));
+      // PUT dirty 列
+      if (dirtyRows.length) {
+        const putRecords = dirtyRows.map((tr) => ({
+          id: tr.dataset.recordId,
+          record: buildRowRecord(tr),
+        }));
 
-      try {
-        await kintone.api(kintone.api.url('/v1/records.json', true), 'PUT', {
-          app: appId,
-          records: putRecords,
-        });
+        await kintone.api(apiUrl, 'PUT', { app: appId, records: putRecords });
         dirtyRows.forEach((tr) => {
           tr.dataset.dirty = '';
           updateRowStatus(tr, 'saved');
         });
-      } catch (err) {
-        console.error('[saveCard] PUT error', err);
-        alert(`更新失敗：${err.message || JSON.stringify(err)}`);
-        if (saveBtn) { saveBtn.disabled = false; }
-        updateCardStatus(gIdx);
-        return;
       }
-    }
 
-    if (saveBtn) saveBtn.disabled = false;
-    updateCardStatus(gIdx);
+    } catch (err) {
+      console.error('[saveCard] error:', err);
+      alert(`儲存失敗：${err.message || JSON.stringify(err)}`);
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+      updateCardStatus(gIdx);
+    }
   }
 
   async function submitBatch() {
@@ -1643,7 +1651,10 @@
       maxNum = await fetchMaxRoleNum();
     } catch (err) {
       console.error('[batch-role-creator] fetchMaxRoleNum error', err);
-      maxNum = 0; // 查不到就從 1 開始，不阻擋流程
+      showStatus(statusId, 'error', err.message || '讀取既有 role_id 失敗，已停止建立，避免產生重複角色代碼。');
+      btn.disabled = false;
+      btn.textContent = '建立角色記錄';
+      return;
     }
     try {
       records = buildRecords(maxNum + 1);
@@ -1655,17 +1666,24 @@
     }
 
     const appId = kintone.app.getId();
+    console.log('[batch-role-creator] submitBatch appId:', appId);
+    if (!appId) {
+      showStatus(statusId, 'error', '錯誤：kintone.app.getId() 回傳 null。請確認此 JS 已上傳至 App 685 的「自訂設定」。');
+      btn.disabled = false;
+      btn.textContent = '建立角色記錄';
+      return;
+    }
     const chunkSize = 100;
     let created = 0;
 
     try {
-      console.log('[batch-role-creator] appId:', appId, '| startNum:', maxNum + 1);
+      console.log('[batch-role-creator] submitBatch appId:', appId, '| startNum:', maxNum + 1);
       console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
       showStatus(statusId, 'info', `準備建立 ${records.length} 筆（從 ROLE_${String(maxNum + 1).padStart(4, '0')} 起）...`);
       for (let i = 0; i < records.length; i += chunkSize) {
         const chunk = records.slice(i, i + chunkSize);
         showStatus(statusId, 'info', `建立中... ${created} / ${records.length}`);
-        await kintone.api(kintone.api.url('/v1/records.json', true), 'POST', {
+        await kintone.api(kintone.api.url('/k/v1/records', true), 'POST', {
           app: appId,
           records: chunk,
         });
