@@ -17,6 +17,8 @@
  *   2026-05-02  Jimmy/Claude  每列加刪除按鈕；每張卡片加「＋ 新增人員」可打字搜尋後手動加列
  *   2026-05-03  Jimmy/Claude  逐卡儲存：每張卡片獨立「✓ 建立此組」，POST 新列 / PUT dirty 列，
  *                              列狀態圖示（✓已存 / ●待更新），避免整批失敗需重填
+ *   2026-05-03  Jimmy/Claude  修正 CB_IL02：補上必填欄位 role_name（unit_name_title_level）
+ *                              與 signing_mode；卡片批控區新增 signing_mode 下拉選單
  */
 (function () {
   'use strict';
@@ -955,6 +957,13 @@
                 </select>
               </div>
               <div>
+                <label class="field-label" for="bulk-signing-${gIdx}">signing_mode</label>
+                <select id="bulk-signing-${gIdx}" class="bulk-signing-select" data-gidx="${gIdx}">
+                  <option value="任一人簽" selected>任一人簽</option>
+                  <option value="全員會簽">全員會簽</option>
+                </select>
+              </div>
+              <div>
                 <button class="btn btn-primary br-apply-group" data-gidx="${gIdx}">套用全組</button>
               </div>
             </div>
@@ -1399,10 +1408,26 @@
     const groupSelect = row.querySelector('.holder-group-select');
     const holderType = holderTypeSelect ? holderTypeSelect.value : HOLDER_TYPE_USER;
 
+    const gIdx = row.dataset.gidx;
+    const unitName   = unitSelect  ? unitSelect.value.trim()  : '';
+    const titleLevel = titleSelect ? titleSelect.value.trim() : '';
+
+    // signing_mode 從卡片批控下拉讀取，預設「任一人簽」
+    const signingSelect = gIdx
+      ? document.querySelector(`.bulk-signing-select[data-gidx="${gIdx}"]`)
+      : null;
+    const signingMode = signingSelect ? signingSelect.value : '任一人簽';
+
+    // role_name = unit_name_title_level（與預覽欄一致）
+    const roleName =
+      unitName && titleLevel ? `${unitName}_${titleLevel}` : unitName || titleLevel || '';
+
     const record = {
-      unit_name:    { value: unitSelect ? unitSelect.value.trim() : '' },
-      title_level:  { value: titleSelect ? titleSelect.value.trim() : '' },
+      role_name:    { value: roleName },
+      unit_name:    { value: unitName },
+      title_level:  { value: titleLevel },
       holder_type:  { value: holderType },
+      signing_mode: { value: signingMode },
       is_active:    { value: [ACTIVE_VALUE] },
     };
 
