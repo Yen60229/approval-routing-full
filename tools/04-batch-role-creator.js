@@ -431,14 +431,29 @@
       /* ── Holder 欄 ── */
       .holder-target   { display: flex; flex-direction: column; gap: 6px; }
       .holder-person {
-        color: #374151;
-        font-size: 13px;
-        line-height: 1.6;
         padding: 9px 12px;
         border: 1.5px solid #e5e7eb;
         border-radius: 6px;
         background: #f9fafb;
-        font-weight: 600;
+        line-height: 1;
+      }
+      .hp-name {
+        font-size: 14px;
+        font-weight: 700;
+        color: #1a2b3c;
+        line-height: 1.4;
+        word-break: break-word;
+      }
+      .hp-code {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+        font-weight: 400;
+      }
+      .hp-placeholder {
+        font-size: 13px;
+        color: #9ca3af;
+        font-weight: 400;
       }
       .holder-group-filter,
       .holder-group-select { width: 100%; }
@@ -833,7 +848,7 @@
                 <div class="person-name">${_esc(user.displayName)}</div>
                 <div class="person-meta">
                   登入帳號：${_esc(user.loginAccount)}<br>
-                  組織：${_esc(user.groupKey)}${user.allOrgs.length > 1 ? `（兼任 ${user.allOrgs.length} 個單位）` : ''}
+                  組織：${_esc(user.groupKey)}${user.allOrgs.length > 1 ? `<br><span style="opacity:.65;">（兼任 ${user.allOrgs.length} 個單位）</span>` : ''}
                 </div>
               </td>
               <td>
@@ -866,7 +881,8 @@
                     data-gidx="${gIdx}"
                     data-ridx="${rIdx}"
                   >
-                    ${_esc(user.loginAccount)} / ${_esc(user.displayName)}
+                    <div class="hp-name">${_esc(user.displayName)}</div>
+                    <div class="hp-code">${_esc(user.loginAccount)}</div>
                   </div>
                   <div
                     class="holder-group-wrapper"
@@ -1015,7 +1031,7 @@
         <td>
           <div class="holder-target">
             <div class="holder-person" data-role="holder-person" data-gidx="${gIdx}" data-ridx="${rId}">
-              （選人後自動填入）
+              <div class="hp-placeholder">（選人後自動填入）</div>
             </div>
             <div class="holder-group-wrapper" data-role="holder-group-wrapper" data-gidx="${gIdx}" data-ridx="${rId}" style="display:none;">
               <input type="text" class="holder-group-filter" data-gidx="${gIdx}" data-ridx="${rId}" placeholder="輸入幾個字搜尋群組">
@@ -1049,7 +1065,7 @@
     if (!term) {
       if (tr) tr.dataset.code = '';
       if (infoDiv) { infoDiv.textContent = ''; infoDiv.style.color = ''; }
-      if (holderPersonEl) holderPersonEl.textContent = '（選人後自動填入）';
+      if (holderPersonEl) holderPersonEl.innerHTML = '<div class="hp-placeholder">（選人後自動填入）</div>';
       return;
     }
 
@@ -1060,14 +1076,17 @@
         infoDiv.style.color = '#27ae60';
         infoDiv.textContent = `✓ ${user.name}（${user.code}）`;
       }
-      if (holderPersonEl) holderPersonEl.textContent = `${user.code} / ${user.name}`;
+      if (holderPersonEl) {
+        holderPersonEl.innerHTML =
+          `<div class="hp-name">${_esc(user.name)}</div><div class="hp-code">${_esc(user.code)}</div>`;
+      }
     } else {
       if (tr) tr.dataset.code = '';
       if (infoDiv) {
         infoDiv.style.color = '#e74c3c';
         infoDiv.textContent = '找不到使用者，請從建議清單選取';
       }
-      if (holderPersonEl) holderPersonEl.textContent = '（選人後自動填入）';
+      if (holderPersonEl) holderPersonEl.innerHTML = '<div class="hp-placeholder">（選人後自動填入）</div>';
     }
   }
 
