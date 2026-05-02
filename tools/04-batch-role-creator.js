@@ -1571,7 +1571,7 @@
         throw new Error('kintone.app.getId() 回傳 null。請確認此 JS 已上傳至 App 685 的「自訂設定」，而非其他 App。');
       }
 
-      const apiUrl = kintone.api.url('/v1/records.json', true);
+      const apiUrl = kintone.api.url('/k/v1/records', true);
 
       // POST 新列
       if (newRows.length) {
