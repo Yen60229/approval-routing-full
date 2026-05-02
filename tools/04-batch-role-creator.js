@@ -1365,6 +1365,8 @@
     let created = 0;
 
     try {
+      console.log('[batch-role-creator] appId:', appId);
+      console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
       for (let i = 0; i < records.length; i += chunkSize) {
         const chunk = records.slice(i, i + chunkSize);
         showStatus(statusId, 'info', `建立中... ${created} / ${records.length}`);
