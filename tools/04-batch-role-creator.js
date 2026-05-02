@@ -1243,29 +1243,45 @@
     previewCode.textContent = roleName;
   }
 
-  function generateRoleIds(count) {
-    const now = new Date();
-    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-    const ts = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, '0'),
-      String(now.getDate()).padStart(2, '0'),
-      String(now.getHours()).padStart(2, '0'),
-      String(now.getMinutes()).padStart(2, '0'),
-      String(now.getSeconds()).padStart(2, '0'),
-      String(now.getMilliseconds()).padStart(3, '0'),
-      rand,
-    ].join('');
+  /**
+   * 查出 App 685 現有 role_id 裡最大的流水號（符合 ROLE_\d+ 格式）。
+   * 只計純數字後綴；舊格式（含時間戳）一律忽略，不影響序號。
+   */
+  async function fetchMaxRoleNum() {
+    const appId = kintone.app.getId();
+    let maxNum = 0;
+    let offset = 0;
+    while (true) {
+      const resp = await kintone.api(kintone.api.url('/v1/records.json', true), 'GET', {
+        app: appId,
+        fields: ['role_id'],
+        query: `limit 500 offset ${offset}`,
+      });
+      const batch = Array.isArray(resp.records) ? resp.records : [];
+      batch.forEach((r) => {
+        const val = (r.role_id && r.role_id.value) || '';
+        if (/^ROLE_\d+$/.test(val)) {
+          const num = parseInt(val.slice(5), 10);
+          if (num > maxNum) maxNum = num;
+        }
+      });
+      if (batch.length < 500) break;
+      offset += 500;
+    }
+    return maxNum;
+  }
 
+  /** 從 startNum 開始產生 count 個流水號，格式 ROLE_0001 / ROLE_0002 … */
+  function generateRoleIds(count, startNum) {
     return Array.from(
       { length: count },
-      (_, index) => `ROLE_${ts}_${String(index + 1).padStart(3, '0')}`,
+      (_, i) => `ROLE_${String(startNum + i).padStart(4, '0')}`,
     );
   }
 
-  function buildRecords() {
+  function buildRecords(startNum = 1) {
     const rows = [...document.querySelectorAll('tr.br-data-row')];
-    const roleIds = generateRoleIds(rows.length);
+    const roleIds = generateRoleIds(rows.length, startNum);
 
     return rows.map((row, idx) => {
       const code = row.dataset.code;
@@ -1340,9 +1356,10 @@
     const btn = document.getElementById('br-btn-submit');
     if (btn.disabled) return;
 
+    // ① 先做欄位驗證（用暫時序號，確認資料無誤）
     let records;
     try {
-      records = buildRecords();
+      records = buildRecords(1);
     } catch (error) {
       alert(error.message);
       return;
@@ -1358,15 +1375,33 @@
     const statusId = 'br-submit-status';
     btn.disabled = true;
     btn.textContent = '建立中...';
-    showStatus(statusId, 'info', `準備建立 0 / ${records.length} 筆...`);
+    showStatus(statusId, 'info', '查詢現有角色編號中...');
+
+    // ② 查出現有最大流水號，重建帶正確序號的記錄
+    let maxNum;
+    try {
+      maxNum = await fetchMaxRoleNum();
+    } catch (err) {
+      console.error('[batch-role-creator] fetchMaxRoleNum error', err);
+      maxNum = 0; // 查不到就從 1 開始，不阻擋流程
+    }
+    try {
+      records = buildRecords(maxNum + 1);
+    } catch (error) {
+      showStatus(statusId, 'error', error.message);
+      btn.disabled = false;
+      btn.textContent = '建立角色記錄';
+      return;
+    }
 
     const appId = kintone.app.getId();
     const chunkSize = 100;
     let created = 0;
 
     try {
-      console.log('[batch-role-creator] appId:', appId);
+      console.log('[batch-role-creator] appId:', appId, '| startNum:', maxNum + 1);
       console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
+      showStatus(statusId, 'info', `準備建立 ${records.length} 筆（從 ROLE_${String(maxNum + 1).padStart(4, '0')} 起）...`);
       for (let i = 0; i < records.length; i += chunkSize) {
         const chunk = records.slice(i, i + chunkSize);
         showStatus(statusId, 'info', `建立中... ${created} / ${records.length}`);
