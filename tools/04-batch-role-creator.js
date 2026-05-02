@@ -15,6 +15,8 @@
  *   2026-05-02  Jimmy/Claude  兼任多組織者改為每個組織各顯示一列，可獨立設定
  *   2026-05-02  Jimmy/Claude  unit_name 改為 <input list="datalist"> 可打字搜尋，送出時驗證值必須在選項內
  *   2026-05-02  Jimmy/Claude  每列加刪除按鈕；每張卡片加「＋ 新增人員」可打字搜尋後手動加列
+ *   2026-05-03  Jimmy/Claude  逐卡儲存：每張卡片獨立「✓ 建立此組」，POST 新列 / PUT dirty 列，
+ *                              列狀態圖示（✓已存 / ●待更新），避免整批失敗需重填
  */
 (function () {
   'use strict';
@@ -198,272 +200,315 @@
     const style = document.createElement('style');
     style.id = 'batch-role-css';
     style.textContent = `
+      /* ── 基礎字型 ── */
+      #batch-role-modal,
+      #batch-role-modal * {
+        font-family: "Microsoft JhengHei", "微軟正黑體", "PingFang TC", sans-serif;
+        box-sizing: border-box;
+      }
+
+      /* ── 遮罩 ── */
       #batch-role-modal {
         display: none;
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.6);
+        background: rgba(0,0,0,.55);
         z-index: 1000;
         overflow-y: auto;
         padding: 32px 20px;
-        font-family: "Microsoft JhengHei", sans-serif;
       }
+
+      /* ── 主容器 ── */
       #batch-role-modal-inner {
-        width: min(1200px, 96%);
+        width: min(1320px, 96%);
         margin: 0 auto;
         background: #fff;
-        border-radius: 8px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-        padding: 24px;
+        border-radius: 12px;
+        box-shadow: 0 16px 48px rgba(0,0,0,.22);
+        padding: 32px 36px;
       }
+
+      /* ── 標題 ── */
       #batch-role-modal h2 {
-        margin: 0 0 20px;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #3498db;
-        color: #333;
-        font-size: 20px;
+        margin: 0 0 26px;
+        padding-bottom: 14px;
+        border-bottom: 3px solid #2980b9;
+        color: #1a2b3c;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: .02em;
       }
-      #batch-role-modal .section {
-        margin-bottom: 24px;
-      }
+
+      /* ── 區塊 ── */
+      #batch-role-modal .section { margin-bottom: 30px; }
       #batch-role-modal .section h3 {
-        margin: 0 0 10px;
-        color: #444;
-        font-size: 16px;
+        margin: 0 0 12px;
+        color: #2c3e50;
+        font-size: 17px;
+        font-weight: 700;
       }
+
+      /* ── Textarea ── */
       #batch-role-modal textarea {
         width: 100%;
-        min-height: 120px;
-        padding: 10px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
+        min-height: 130px;
+        padding: 12px 14px;
+        border: 1.5px solid #b2bec3;
+        border-radius: 6px;
         resize: vertical;
-        font-size: 14px;
-        box-sizing: border-box;
+        font-size: 15px;
+        line-height: 1.7;
+        transition: border-color .2s, box-shadow .2s;
       }
+      #batch-role-modal textarea:focus {
+        border-color: #3498db;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(52,152,219,.18);
+      }
+
+      /* ── 輸入框 / 下拉 ── */
       #batch-role-modal input[type="text"],
       #batch-role-modal select {
         width: 100%;
         min-width: 0;
-        padding: 8px 10px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        font-size: 13px;
-        box-sizing: border-box;
+        padding: 10px 12px;
+        border: 1.5px solid #b2bec3;
+        border-radius: 6px;
+        font-size: 14px;
+        line-height: 1.5;
+        color: #2d3748;
+        background: #fff;
+        transition: border-color .2s, box-shadow .2s;
       }
+      #batch-role-modal input[type="text"]:focus,
+      #batch-role-modal select:focus {
+        border-color: #3498db;
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(52,152,219,.18);
+      }
+
+      /* ── 按鈕 ── */
       #batch-role-modal .btn {
         border: none;
-        border-radius: 4px;
+        border-radius: 6px;
         cursor: pointer;
-        font-size: 14px;
-        font-weight: 600;
-        padding: 8px 16px;
+        font-size: 15px;
+        font-weight: 700;
+        padding: 10px 22px;
+        line-height: 1.3;
+        transition: filter .15s, transform .1s;
+        letter-spacing: .01em;
       }
-      #batch-role-modal .btn-sm {
-        padding: 4px 8px;
-        font-size: 12px;
-      }
-      #batch-role-modal .btn-primary {
-        background: #3498db;
-        color: #fff;
-      }
-      #batch-role-modal .btn-primary:hover {
-        background: #2980b9;
-      }
-      #batch-role-modal .btn-success {
-        background: #27ae60;
-        color: #fff;
-      }
-      #batch-role-modal .btn-success:hover {
-        background: #219a52;
-      }
-      #batch-role-modal .btn-secondary {
-        background: #e0e0e0;
-        color: #333;
-      }
-      #batch-role-modal .btn-danger {
-        background: #e74c3c;
-        color: #fff;
-      }
+      #batch-role-modal .btn:hover  { filter: brightness(1.08); }
+      #batch-role-modal .btn:active { transform: scale(.97); }
+      #batch-role-modal .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; filter: none; }
+      #batch-role-modal .btn-sm { padding: 7px 14px; font-size: 13px; }
+      #batch-role-modal .btn-primary   { background: #2980b9; color: #fff; }
+      #batch-role-modal .btn-success   { background: #27ae60; color: #fff; }
+      #batch-role-modal .btn-secondary { background: #dfe6e9; color: #2d3436; border: 1px solid #b2bec3; }
+      #batch-role-modal .btn-danger    { background: #e74c3c; color: #fff; }
+
+      /* ── 說明文字 ── */
       #batch-role-modal .helper-text {
-        color: #666;
-        font-size: 13px;
-        line-height: 1.6;
-        margin: 0 0 10px;
+        color: #4a5568;
+        font-size: 14px;
+        line-height: 1.75;
+        margin: 0 0 12px;
       }
       #batch-role-modal .toolbar {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
         flex-wrap: wrap;
       }
+
+      /* ── 組織卡片 ── */
       .org-card {
-        border: 1px solid #e1e4e8;
-        border-radius: 8px;
+        border: 1px solid #d0d7de;
+        border-left: 5px solid #2980b9;
+        border-radius: 10px;
         overflow: hidden;
-        margin-bottom: 16px;
+        margin-bottom: 22px;
         background: #fff;
+        box-shadow: 0 3px 10px rgba(0,0,0,.07);
       }
       .org-header {
-        padding: 14px 16px;
-        background: #f6f8fa;
-        border-bottom: 1px solid #e1e4e8;
+        padding: 18px 22px;
+        background: linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+        border-bottom: 1px solid #d0d7de;
       }
       .org-header-top {
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 12px;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
       }
       .org-header-title {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 15px;
-        font-weight: 700;
-        color: #24292e;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 800;
+        color: #1a2b3c;
+        letter-spacing: .01em;
       }
       .badge {
         border-radius: 999px;
-        background: #e1e4e8;
-        padding: 2px 8px;
+        background: #2980b9;
+        color: #fff;
+        padding: 3px 11px;
         font-size: 12px;
-        font-weight: 400;
+        font-weight: 600;
       }
       .org-bulk-controls {
         display: grid;
-        grid-template-columns: minmax(220px, 1.2fr) minmax(180px, 1fr) auto;
-        gap: 12px;
+        grid-template-columns: minmax(240px, 1.2fr) minmax(200px, 1fr) auto;
+        gap: 14px;
         align-items: end;
       }
       .field-label {
         display: block;
-        margin-bottom: 4px;
-        color: #666;
-        font-size: 12px;
+        margin-bottom: 5px;
+        color: #4a5568;
+        font-size: 13px;
+        font-weight: 700;
       }
-      .org-table {
-        width: 100%;
-        border-collapse: collapse;
+
+      /* ── 表格 ── */
+      .org-table { width: 100%; border-collapse: collapse; }
+      .org-table th {
+        padding: 13px 16px;
+        border-bottom: 2px solid #d0d7de;
+        color: #4a5568;
+        font-size: 13px;
+        font-weight: 700;
+        background: #f7f9fc;
+        white-space: nowrap;
+        text-align: left;
+        letter-spacing: .02em;
       }
-      .org-table th,
       .org-table td {
-        padding: 10px 14px;
-        border-bottom: 1px solid #eee;
-        vertical-align: top;
+        padding: 13px 16px;
+        border-bottom: 1px solid #edf0f4;
+        vertical-align: middle;
         text-align: left;
       }
-      .org-table th {
-        color: #666;
-        font-size: 13px;
-        font-weight: 600;
-      }
-      .org-table tr:last-child td {
-        border-bottom: none;
-      }
+      .org-table tr:last-child td { border-bottom: none; }
+      .org-table tbody tr:hover td { background: #f0f6ff; }
+
+      /* ── 人員欄 ── */
       .person-name {
-        color: #222;
-        font-weight: 700;
-        font-size: 14px;
+        color: #1a2b3c;
+        font-weight: 800;
+        font-size: 15px;
       }
       .person-meta {
-        color: #666;
-        font-size: 12px;
-        margin-top: 4px;
-        line-height: 1.5;
+        color: #6b7280;
+        font-size: 13px;
+        margin-top: 5px;
+        line-height: 1.65;
       }
+
+      /* ── role_name 預覽 ── */
       .row-preview {
         display: inline-block;
-        background: #f1f3f5;
-        border-radius: 4px;
-        padding: 4px 8px;
-        color: #8b0000;
-        font-family: Consolas, monospace;
+        background: #fffbeb;
+        border: 1.5px solid #f0c040;
+        border-radius: 5px;
+        padding: 5px 10px;
+        color: #7b4f00;
+        font-family: Consolas, "Courier New", monospace;
         font-size: 13px;
         font-weight: 700;
         white-space: nowrap;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
-      .holder-target {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }
+
+      /* ── Holder 欄 ── */
+      .holder-target   { display: flex; flex-direction: column; gap: 6px; }
       .holder-person {
-        color: #555;
-        font-size: 12px;
-        line-height: 1.5;
-        padding: 8px 10px;
-        border: 1px solid #e5e7eb;
-        border-radius: 4px;
-        background: #f8fafc;
-      }
-      .holder-group-filter,
-      .holder-group-select {
-        width: 100%;
-      }
-      .holder-hint {
-        color: #777;
-        font-size: 12px;
-        line-height: 1.4;
-      }
-      .holder-lock {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        color: #334155;
-        font-size: 12px;
+        color: #374151;
+        font-size: 13px;
+        line-height: 1.6;
+        padding: 9px 12px;
+        border: 1.5px solid #e5e7eb;
+        border-radius: 6px;
+        background: #f9fafb;
         font-weight: 600;
       }
+      .holder-group-filter,
+      .holder-group-select { width: 100%; }
+      .holder-hint  { color: #9ca3af; font-size: 12px; line-height: 1.5; }
+      .holder-lock  { display: inline-flex; align-items: center; gap: 6px; color: #374151; font-size: 13px; font-weight: 600; }
+
+      /* ── 狀態提示條 ── */
       .status-box {
-        margin-top: 12px;
-        padding: 12px 14px;
-        border-radius: 4px;
+        margin-top: 14px;
+        padding: 14px 18px;
+        border-radius: 8px;
         display: none;
-        font-size: 14px;
+        font-size: 15px;
+        line-height: 1.65;
+        font-weight: 500;
       }
-      .status-success {
-        display: block !important;
-        background: #d4edda;
-        border: 1px solid #c3e6cb;
-        color: #155724;
-      }
-      .status-error {
-        display: block !important;
-        background: #f8d7da;
-        border: 1px solid #f5c6cb;
-        color: #721c24;
-      }
-      .status-info {
-        display: block !important;
-        background: #e2e3e5;
-        border: 1px solid #d6d8db;
-        color: #383d41;
-      }
+      .status-success { display: block !important; background: #d1fae5; border: 1.5px solid #6ee7b7; color: #064e3b; }
+      .status-error   { display: block !important; background: #fee2e2; border: 1.5px solid #fca5a5; color: #7f1d1d; }
+      .status-info    { display: block !important; background: #e0f2fe; border: 1.5px solid #7dd3fc; color: #0c4a6e; }
+
+      /* ── 新增人員列資訊 ── */
       .new-row-person-info {
-        font-size: 12px;
-        margin-top: 4px;
-        line-height: 1.4;
+        font-size: 13px;
+        margin-top: 5px;
+        line-height: 1.5;
+        font-weight: 600;
       }
+
+      /* ── 列儲存狀態圖示 ── */
+      .row-save-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        font-size: 12px;
+        font-weight: 700;
+        vertical-align: middle;
+        margin-right: 4px;
+        transition: background .25s;
+      }
+      .row-save-icon.rsi-saved { background: #10b981; color: #fff; }
+      .row-save-icon.rsi-dirty { background: #f59e0b; color: #fff; }
+
+      /* ── 卡片儲存狀態文字 ── */
+      .card-save-status { font-size: 13px; font-weight: 600; }
+
+      /* ── 索引頁入口按鈕 ── */
       #btn-open-batch-role {
         margin-left: 16px;
-        background: #3498db;
+        background: #2980b9;
         color: #fff;
         border: none;
-        border-radius: 4px;
-        padding: 0 16px;
+        border-radius: 6px;
+        padding: 0 22px;
         height: 48px;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 15px;
         font-weight: 700;
+        letter-spacing: .02em;
       }
-      #btn-open-batch-role:hover {
-        background: #2980b9;
-      }
-      @media (max-width: 900px) {
-        .org-bulk-controls {
-          grid-template-columns: 1fr;
-        }
+      #btn-open-batch-role:hover { background: #1e6fa5; }
+
+      /* ── 手機版收合 ── */
+      @media (max-width: 960px) {
+        #batch-role-modal-inner { padding: 20px 16px; }
+        .org-bulk-controls { grid-template-columns: 1fr; }
+        .org-table th:nth-child(n+4),
+        .org-table td:nth-child(n+4) { display: none; }
       }
     `;
     document.head.appendChild(style);
@@ -851,7 +896,8 @@
               <td>
                 <code class="row-preview" id="preview-${gIdx}-${rIdx}">_</code>
               </td>
-              <td>
+              <td style="white-space:nowrap;">
+                <span class="row-save-icon" title="未儲存"></span>
                 <button class="btn btn-danger btn-sm row-delete-btn" type="button" title="刪除此列">✕</button>
               </td>
             </tr>
@@ -867,7 +913,11 @@
                 ${_esc(group.orgName)}
                 <span class="badge">${group.users.length} 人</span>
               </div>
-              <button class="btn btn-primary btn-sm br-add-person" data-gidx="${gIdx}" type="button">＋ 新增人員</button>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span class="card-save-status" id="card-status-${gIdx}" style="font-size:12px;"></span>
+                <button class="btn btn-success btn-sm br-save-card" data-gidx="${gIdx}" type="button">✓ 建立此組</button>
+                <button class="btn btn-primary btn-sm br-add-person" data-gidx="${gIdx}" type="button">＋ 新增人員</button>
+              </div>
             </div>
             <div class="org-bulk-controls">
               <div>
@@ -979,7 +1029,8 @@
         <td>
           <code class="row-preview" id="preview-${gIdx}-${rId}">_</code>
         </td>
-        <td>
+        <td style="white-space:nowrap;">
+          <span class="row-save-icon" title="未儲存"></span>
           <button class="btn btn-danger btn-sm row-delete-btn" type="button" title="刪除此列">✕</button>
         </td>
       </tr>
@@ -1027,17 +1078,26 @@
 
     const unitInput = tr.querySelector('.row-unit-select');
     if (unitInput) {
-      unitInput.addEventListener('input', () => updateSinglePreview(gIdx, rIdx));
+      unitInput.addEventListener('input', () => {
+        markRowDirty(tr);
+        updateSinglePreview(gIdx, rIdx);
+      });
     }
 
     const titleSelect = tr.querySelector('.row-title-select');
     if (titleSelect) {
-      titleSelect.addEventListener('change', () => updateSinglePreview(gIdx, rIdx));
+      titleSelect.addEventListener('change', () => {
+        markRowDirty(tr);
+        updateSinglePreview(gIdx, rIdx);
+      });
     }
 
     const holderTypeSelect = tr.querySelector('.row-holder-type-select');
     if (holderTypeSelect) {
-      holderTypeSelect.addEventListener('change', () => toggleHolderTarget(gIdx, rIdx));
+      holderTypeSelect.addEventListener('change', () => {
+        markRowDirty(tr);
+        toggleHolderTarget(gIdx, rIdx);
+      });
     }
 
     const groupFilter = tr.querySelector('.holder-group-filter');
@@ -1111,6 +1171,11 @@
     // 卡片級：新增人員列
     document.querySelectorAll('.br-add-person').forEach((btn) => {
       btn.addEventListener('click', (event) => addPersonRow(event.currentTarget.dataset.gidx));
+    });
+
+    // 卡片級：建立/更新此組
+    document.querySelectorAll('.br-save-card').forEach((btn) => {
+      btn.addEventListener('click', (event) => saveCard(event.currentTarget.dataset.gidx));
     });
   }
 
@@ -1279,77 +1344,228 @@
     );
   }
 
+  /** 驗證單一列的欄位完整性，不合法時 throw Error */
+  function validateRow(row) {
+    const code = row.dataset.code;
+    const nameEl = row.querySelector('.person-name');
+    const unitSelect = row.querySelector('.row-unit-select');
+    const titleSelect = row.querySelector('.row-title-select');
+    const holderTypeSelect = row.querySelector('.row-holder-type-select');
+    const unitName = unitSelect ? unitSelect.value.trim() : '';
+    const titleLevel = titleSelect ? titleSelect.value.trim() : '';
+    const holderType = holderTypeSelect ? holderTypeSelect.value : HOLDER_TYPE_USER;
+    const nameDisplay = nameEl ? nameEl.textContent.trim() : code || '新增人員';
+
+    if (holderType === HOLDER_TYPE_USER && !code) {
+      throw new Error(`「${nameDisplay}」尚未完成人員選取，請從搜尋清單選取使用者。`);
+    }
+    if (!unitName) {
+      throw new Error(`「${nameDisplay}」的 unit_name 尚未填寫。`);
+    }
+    if (!_unitNameOptions.includes(unitName)) {
+      throw new Error(`「${nameDisplay}」的 unit_name「${unitName}」不在選項清單中，請從建議清單選取。`);
+    }
+    if (!titleLevel) {
+      throw new Error(`「${nameDisplay}」的 title_level 尚未選擇。`);
+    }
+  }
+
+  /** 從單一列 DOM 建構 kintone record 物件（不含 role_id，由呼叫方決定）*/
+  function buildRowRecord(row) {
+    const code = row.dataset.code;
+    const nameEl = row.querySelector('.person-name');
+    const unitSelect = row.querySelector('.row-unit-select');
+    const titleSelect = row.querySelector('.row-title-select');
+    const holderTypeSelect = row.querySelector('.row-holder-type-select');
+    const groupSelect = row.querySelector('.holder-group-select');
+    const holderType = holderTypeSelect ? holderTypeSelect.value : HOLDER_TYPE_USER;
+
+    const record = {
+      unit_name:    { value: unitSelect ? unitSelect.value.trim() : '' },
+      title_level:  { value: titleSelect ? titleSelect.value.trim() : '' },
+      holder_type:  { value: holderType },
+      is_active:    { value: [ACTIVE_VALUE] },
+    };
+
+    if (holderType === HOLDER_TYPE_GROUP) {
+      const groupCode = groupSelect ? groupSelect.value.trim() : '';
+      const matchedGroup = _allGroups.find(
+        (g) => normalize(g.code) === normalize(groupCode),
+      );
+      if (!matchedGroup) {
+        const nameDisplay = nameEl ? nameEl.textContent.trim() : code || '此列';
+        throw new Error(`「${nameDisplay}」的指定群組尚未正確選取。`);
+      }
+      record.holder_group = { value: [{ code: matchedGroup.code }] };
+      record.holder_user  = { value: [] };
+    } else {
+      const matchedUser = _userDirectory && _userDirectory.byCode
+        ? _userDirectory.byCode.get(normalize(code))
+        : null;
+      record.holder_user  = {
+        value: [matchedUser ? { code: matchedUser.code, name: matchedUser.name } : { code }],
+      };
+      record.holder_group = { value: [] };
+    }
+
+    return record;
+  }
+
+  /** 全部列驗證 + 建構（整批送出用） */
   function buildRecords(startNum = 1) {
     const rows = [...document.querySelectorAll('tr.br-data-row')];
+    rows.forEach(validateRow);
     const roleIds = generateRoleIds(rows.length, startNum);
-
-    return rows.map((row, idx) => {
-      const code = row.dataset.code;
-      const nameEl = row.querySelector('.person-name');
-      const unitSelect = row.querySelector('.row-unit-select');
-      const titleSelect = row.querySelector('.row-title-select');
-      const holderTypeSelect = row.querySelector('.row-holder-type-select');
-      const groupSelect = row.querySelector('.holder-group-select');
-      const unitName = unitSelect ? unitSelect.value.trim() : '';
-      const titleLevel = titleSelect ? titleSelect.value.trim() : '';
-      const holderType = holderTypeSelect ? holderTypeSelect.value : HOLDER_TYPE_USER;
-      const nameDisplay = nameEl ? nameEl.textContent.trim() : code || '新增人員';
-
-      // 新增人員列：指定個人時必須已完成搜尋選取
-      if (holderType === HOLDER_TYPE_USER && !code) {
-        throw new Error(`「${nameDisplay}」尚未完成人員選取，請從搜尋清單選取使用者。`);
-      }
-
-      if (!unitName) {
-        throw new Error(`「${nameDisplay}」的 unit_name 尚未填寫。`);
-      }
-      if (!_unitNameOptions.includes(unitName)) {
-        throw new Error(`「${nameDisplay}」的 unit_name「${unitName}」不在選項清單中，請從建議清單選取。`);
-      }
-      if (!titleLevel) {
-        throw new Error(`「${nameDisplay}」的 title_level 尚未選擇。`);
-      }
-
-      const record = {
-        role_id: { value: roleIds[idx] },
-        unit_name: { value: unitName },
-        title_level: { value: titleLevel },
-        holder_type: { value: holderType },
-        is_active: { value: [ACTIVE_VALUE] },
-      };
-
-      if (holderType === HOLDER_TYPE_GROUP) {
-        const groupCode = groupSelect ? groupSelect.value.trim() : '';
-        const matchedGroup = _allGroups.find(
-          (group) => normalize(group.code) === normalize(groupCode),
-        );
-
-        if (!matchedGroup) {
-          throw new Error(`「${nameEl ? nameEl.textContent : code}」的指定群組尚未正確選取。`);
-        }
-
-        record.holder_group = {
-          value: [{ code: matchedGroup.code }],
-        };
-        record.holder_user = { value: [] };
-      } else {
-        const matchedUser =
-          _userDirectory && _userDirectory.byCode
-            ? _userDirectory.byCode.get(normalize(code))
-            : null;
-
-        record.holder_user = {
-          value: [
-            matchedUser
-              ? { code: matchedUser.code, name: matchedUser.name }
-              : { code },
-          ],
-        };
-        record.holder_group = { value: [] };
-      }
-
-      return record;
+    return rows.map((row, i) => {
+      const rec = buildRowRecord(row);
+      rec.role_id = { value: roleIds[i] };
+      return rec;
     });
+  }
+
+  /** 更新單列的儲存狀態圖示：'saved' | 'dirty' | '' */
+  function updateRowStatus(tr, state) {
+    const icon = tr.querySelector('.row-save-icon');
+    if (!icon) return;
+    icon.className = `row-save-icon${state ? ` rsi-${state}` : ''}`;
+    if (state === 'saved') { icon.textContent = '✓'; icon.title = '已儲存'; }
+    else if (state === 'dirty') { icon.textContent = '●'; icon.title = '有未儲存的修改'; }
+    else { icon.textContent = ''; icon.title = '未儲存'; }
+  }
+
+  /** 根據卡片內各列狀態，更新卡片右上角按鈕與提示文字 */
+  function updateCardStatus(gIdx) {
+    const allRows = [...document.querySelectorAll(`tr.br-data-row[data-gidx="${gIdx}"]`)];
+    const total = allRows.length;
+    const savedCount = allRows.filter((tr) => tr.dataset.recordId).length;
+    const dirtyCount = allRows.filter((tr) => tr.dataset.dirty === 'true').length;
+    const newCount   = total - savedCount;
+
+    const statusEl = document.getElementById(`card-status-${gIdx}`);
+    const saveBtn  = document.querySelector(`.br-save-card[data-gidx="${gIdx}"]`);
+
+    if (statusEl) {
+      if (savedCount === total && total > 0 && dirtyCount === 0) {
+        statusEl.textContent = `✓ ${total}/${total} 已建立`;
+        statusEl.style.color = '#27ae60';
+      } else if (savedCount > 0) {
+        const parts = [];
+        if (savedCount > 0) parts.push(`${savedCount} 筆已建立`);
+        if (dirtyCount > 0) parts.push(`${dirtyCount} 筆待更新`);
+        if (newCount > 0)   parts.push(`${newCount} 筆未建立`);
+        statusEl.textContent = parts.join('・');
+        statusEl.style.color = '#e67e22';
+      } else {
+        statusEl.textContent = '';
+      }
+    }
+
+    if (saveBtn) {
+      if (savedCount === total && total > 0 && dirtyCount === 0) {
+        saveBtn.textContent = '✓ 已完成';
+        saveBtn.className = 'btn btn-secondary btn-sm br-save-card';
+      } else if (dirtyCount > 0 && newCount === 0) {
+        saveBtn.textContent = '↑ 更新此組';
+        saveBtn.className = 'btn btn-primary btn-sm br-save-card';
+      } else {
+        saveBtn.textContent = dirtyCount > 0 ? '✓ 建立並更新' : '✓ 建立此組';
+        saveBtn.className = 'btn btn-success btn-sm br-save-card';
+      }
+    }
+  }
+
+  /** 若列已儲存過，標記為 dirty 並更新 UI */
+  function markRowDirty(tr) {
+    if (tr.dataset.recordId) {
+      tr.dataset.dirty = 'true';
+      updateRowStatus(tr, 'dirty');
+      updateCardStatus(tr.dataset.gidx);
+    }
+  }
+
+  /** 儲存單張卡片：POST 新列、PUT dirty 列 */
+  async function saveCard(gIdx) {
+    const saveBtn  = document.querySelector(`.br-save-card[data-gidx="${gIdx}"]`);
+    const statusEl = document.getElementById(`card-status-${gIdx}`);
+    const allRows  = [...document.querySelectorAll(`tr.br-data-row[data-gidx="${gIdx}"]`)];
+    const newRows   = allRows.filter((tr) => !tr.dataset.recordId);
+    const dirtyRows = allRows.filter((tr) => tr.dataset.recordId && tr.dataset.dirty === 'true');
+
+    if (!newRows.length && !dirtyRows.length) {
+      if (statusEl) { statusEl.textContent = '無變更'; statusEl.style.color = '#999'; }
+      return;
+    }
+
+    // 驗證
+    try {
+      [...newRows, ...dirtyRows].forEach(validateRow);
+    } catch (err) {
+      alert(err.message);
+      return;
+    }
+
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '處理中…'; }
+
+    const appId = kintone.app.getId();
+
+    // POST 新列
+    if (newRows.length) {
+      let startNum = 1;
+      try { startNum = (await fetchMaxRoleNum()) + 1; } catch (_) { /* 查不到從1開始 */ }
+
+      const roleIds = generateRoleIds(newRows.length, startNum);
+      const postRecords = newRows.map((tr, i) => {
+        const rec = buildRowRecord(tr);
+        rec.role_id = { value: roleIds[i] };
+        return rec;
+      });
+
+      try {
+        const resp = await kintone.api(kintone.api.url('/v1/records.json', true), 'POST', {
+          app: appId,
+          records: postRecords,
+        });
+        (resp.ids || []).forEach((id, i) => {
+          newRows[i].dataset.recordId = id;
+          newRows[i].dataset.dirty = '';
+          updateRowStatus(newRows[i], 'saved');
+        });
+      } catch (err) {
+        console.error('[saveCard] POST error', err);
+        alert(`建立失敗：${err.message || JSON.stringify(err)}`);
+        if (saveBtn) { saveBtn.disabled = false; }
+        updateCardStatus(gIdx);
+        return;
+      }
+    }
+
+    // PUT dirty 列
+    if (dirtyRows.length) {
+      const putRecords = dirtyRows.map((tr) => ({
+        id: tr.dataset.recordId,
+        record: buildRowRecord(tr),
+      }));
+
+      try {
+        await kintone.api(kintone.api.url('/v1/records.json', true), 'PUT', {
+          app: appId,
+          records: putRecords,
+        });
+        dirtyRows.forEach((tr) => {
+          tr.dataset.dirty = '';
+          updateRowStatus(tr, 'saved');
+        });
+      } catch (err) {
+        console.error('[saveCard] PUT error', err);
+        alert(`更新失敗：${err.message || JSON.stringify(err)}`);
+        if (saveBtn) { saveBtn.disabled = false; }
+        updateCardStatus(gIdx);
+        return;
+      }
+    }
+
+    if (saveBtn) saveBtn.disabled = false;
+    updateCardStatus(gIdx);
   }
 
   async function submitBatch() {
