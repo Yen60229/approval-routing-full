@@ -13,6 +13,7 @@
  *                              kintone.app.getFormFields() 動態讀取，
  *                              欄位未設下拉或選項為空時 SweetAlert 報錯停止流程
  *   2026-05-02  Jimmy/Claude  兼任多組織者改為每個組織各顯示一列，可獨立設定
+ *   2026-05-02  Jimmy/Claude  unit_name 改為 <input list="datalist"> 可打字搜尋，送出時驗證值必須在選項內
  */
 (function () {
   'use strict';
@@ -100,6 +101,10 @@
 
   const buildUnitOptionsHtml = (selectedValue) =>
     buildOptionsHtml(_unitNameOptions, selectedValue);
+
+  /** 產生共用 datalist（unit_name 搜尋輸入框用） */
+  const buildUnitDatalist = () =>
+    `<datalist id="br-unit-datalist">${_unitNameOptions.map((o) => `<option value="${_esc(o)}">`).join('')}</datalist>`;
 
   /** 解析 kintone form field 的 options 物件 → 依 index 排序的 label 陣列 */
   function extractFieldOptions(field) {
@@ -752,6 +757,9 @@
     const container = document.getElementById('br-groups-container');
     container.innerHTML = '';
 
+    // 注入共用 datalist（unit_name 搜尋輸入框用，選項在 _unitNameOptions 載入後才可用）
+    container.insertAdjacentHTML('beforeend', buildUnitDatalist());
+
     _parsedGroups.forEach((group, gIdx) => {
       const rowsHtml = group.users
         .map(
@@ -765,9 +773,15 @@
                 </div>
               </td>
               <td>
-                <select class="row-unit-select" data-gidx="${gIdx}" data-ridx="${rIdx}">
-                  ${buildUnitOptionsHtml('')}
-                </select>
+                <input
+                  type="text"
+                  list="br-unit-datalist"
+                  class="row-unit-select"
+                  data-gidx="${gIdx}"
+                  data-ridx="${rIdx}"
+                  placeholder="輸入搜尋…"
+                  autocomplete="off"
+                >
               </td>
               <td>
                 <select class="row-title-select" data-gidx="${gIdx}" data-ridx="${rIdx}">
@@ -835,9 +849,15 @@
             <div class="org-bulk-controls">
               <div>
                 <label class="field-label" for="bulk-unit-${gIdx}">unit_name</label>
-                <select id="bulk-unit-${gIdx}" class="bulk-unit-select" data-gidx="${gIdx}">
-                  ${buildUnitOptionsHtml('')}
-                </select>
+                <input
+                  type="text"
+                  id="bulk-unit-${gIdx}"
+                  list="br-unit-datalist"
+                  class="bulk-unit-select"
+                  data-gidx="${gIdx}"
+                  placeholder="輸入搜尋…"
+                  autocomplete="off"
+                >
               </div>
               <div>
                 <label class="field-label" for="bulk-title-${gIdx}">title_level</label>
@@ -880,8 +900,8 @@
   }
 
   function bindGroupRowEvents() {
-    document.querySelectorAll('.row-unit-select').forEach((select) => {
-      select.addEventListener('change', (event) => {
+    document.querySelectorAll('.row-unit-select').forEach((input) => {
+      input.addEventListener('input', (event) => {
         updateSinglePreview(event.target.dataset.gidx, event.target.dataset.ridx);
       });
     });
@@ -920,8 +940,8 @@
       });
     });
 
-    document.querySelectorAll('.bulk-unit-select').forEach((select) => {
-      select.addEventListener('change', (event) => {
+    document.querySelectorAll('.bulk-unit-select').forEach((input) => {
+      input.addEventListener('input', (event) => {
         const gIdx = event.target.dataset.gidx;
         const button = document.querySelector(`.br-apply-group[data-gidx="${gIdx}"]`);
         if (button) {
@@ -1117,7 +1137,10 @@
       const holderType = holderTypeSelect ? holderTypeSelect.value : HOLDER_TYPE_USER;
 
       if (!unitName) {
-        throw new Error(`「${nameEl ? nameEl.textContent : code}」的 unit_name 尚未選擇。`);
+        throw new Error(`「${nameEl ? nameEl.textContent : code}」的 unit_name 尚未填寫。`);
+      }
+      if (!_unitNameOptions.includes(unitName)) {
+        throw new Error(`「${nameEl ? nameEl.textContent : code}」的 unit_name「${unitName}」不在選項清單中，請從建議清單選取。`);
       }
       if (!titleLevel) {
         throw new Error(`「${nameEl ? nameEl.textContent : code}」的 title_level 尚未選擇。`);
