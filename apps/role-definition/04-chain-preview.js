@@ -45,13 +45,27 @@
         Array.isArray(rec[F.IS_CHAIN_END].value) &&
         rec[F.IS_CHAIN_END].value.includes(CHECKBOX.CHAIN_END);
 
-      // 解析持有人姓名（個人類型才抓；群組類型本次不處理）
+      // 解析持有人姓名
       const holderType = rec[F.HOLDER_TYPE].value;
       let holderNames = [];
       if (holderType === HT.USER) {
+        // 個人：直接從欄位值取名稱，零 API 消耗
         const users = rec[F.HOLDER_USER].value;
         if (Array.isArray(users)) {
           holderNames = users.map((u) => u.name).filter(Boolean);
+        }
+      } else if (holderType === HT.GROUP) {
+        // 群組：kintone.getMembersByGroupCode() 為前端 JS API，不消耗 REST API 次數
+        const groupCode = Array.isArray(rec[F.HOLDER_GROUP].value) && rec[F.HOLDER_GROUP].value[0]
+          ? rec[F.HOLDER_GROUP].value[0].code
+          : null;
+        if (groupCode) {
+          try {
+            const members = kintone.getMembersByGroupCode(groupCode) || [];
+            holderNames = members.map((m) => m.name).filter(Boolean);
+          } catch {
+            // 群組不存在或無權限時靜默略過，tooltip 改顯示角色代碼
+          }
         }
       }
 
