@@ -31,42 +31,51 @@
    * @returns {Promise<Map>}
    */
   const fetchRoleMap = async () => {
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
-      app: APP_ID.ROLE_DEFINITION,
-      fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END, F.HOLDER_TYPE, F.HOLDER_USER, F.HOLDER_GROUP],
-      query: `${F.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,
-    });
-
     const map = new Map();
+    const LIMIT = 500;
+    let offset = 0;
 
-    // 第一層迴圈：建立基礎節點
-    for (const rec of resp.records) {
-      const isEnd =
-        Array.isArray(rec[F.IS_CHAIN_END].value) &&
-        rec[F.IS_CHAIN_END].value.includes(CHECKBOX.CHAIN_END);
-
-      // USER → 直接從欄位值取姓名（0 API）
-      // GROUP → 只存 code，之後僅對可見節點呼叫 /v1/group/users 取成員
-      const holderType = rec[F.HOLDER_TYPE].value;
-      const holderNames = holderType === HT.USER
-        ? (rec[F.HOLDER_USER].value ?? []).map((u) => u.name).filter(Boolean)
-        : [];
-      const holderGroupCode = holderType === HT.GROUP
-        ? (rec[F.HOLDER_GROUP]?.value?.[0]?.code ?? null)
-        : null;
-
-      map.set(rec[F.ROLE_ID].value, {
-        roleId:          rec[F.ROLE_ID].value,
-        roleName:        rec[F.ROLE_NAME].value,
-        nextRoleId:      rec[F.NEXT_ROLE_ID].value || '',
-        prevRoleIds:     [],
-        isChainEnd:      isEnd,
-        holderNames,
-        holderGroupCode,
+    // kintone 每頁上限 500，用 offset 翻頁直到取完全部
+    for (;;) {
+      const resp = await kintoneApi('/k/v1/records', 'GET', {
+        app: APP_ID.ROLE_DEFINITION,
+        fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END, F.HOLDER_TYPE, F.HOLDER_USER, F.HOLDER_GROUP],
+        query: `${F.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${LIMIT} offset ${offset}`,
       });
+
+      // 逐筆建立基礎節點
+      for (const rec of resp.records) {
+        const isEnd =
+          Array.isArray(rec[F.IS_CHAIN_END].value) &&
+          rec[F.IS_CHAIN_END].value.includes(CHECKBOX.CHAIN_END);
+
+        // USER → 直接從欄位值取姓名（0 API）
+        // GROUP → 只存 code，之後僅對可見節點呼叫 /v1/group/users 取成員
+        const holderType = rec[F.HOLDER_TYPE].value;
+        const holderNames = holderType === HT.USER
+          ? (rec[F.HOLDER_USER].value ?? []).map((u) => u.name).filter(Boolean)
+          : [];
+        const holderGroupCode = holderType === HT.GROUP
+          ? (rec[F.HOLDER_GROUP]?.value?.[0]?.code ?? null)
+          : null;
+
+        map.set(rec[F.ROLE_ID].value, {
+          roleId:          rec[F.ROLE_ID].value,
+          roleName:        rec[F.ROLE_NAME].value,
+          nextRoleId:      rec[F.NEXT_ROLE_ID].value || '',
+          prevRoleIds:     [],
+          isChainEnd:      isEnd,
+          holderNames,
+          holderGroupCode,
+        });
+      }
+
+      // 回傳筆數不足一頁，代表已到最後一頁
+      if (resp.records.length < LIMIT) break;
+      offset += LIMIT;
     }
 
-    // 第二層迴圈：建立反向關聯
+    // 最後一次迴圈：建立反向關聯（需等所有頁都載入後才能建）
     for (const [id, role] of map.entries()) {
       if (role.nextRoleId && map.has(role.nextRoleId)) {
         map.get(role.nextRoleId).prevRoleIds.push(id);
