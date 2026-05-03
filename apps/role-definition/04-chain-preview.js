@@ -101,79 +101,92 @@
         margin-left: 5px; border: 1px solid #cbd5e1; flex-shrink: 0;
       }
 
-      /* Tooltip 容器 */
-      .ar-tip { position: relative; display: inline-flex; align-items: center; }
+      /* Trigger：只設游標，tooltip 本身掛在 body（不受 overflow 裁切） */
+      .ar-tip { display: inline-flex; align-items: center; cursor: help; }
 
-      /* Tooltip 浮層（hover 才顯示） */
-      .ar-tip .ar-tooltip {
-        display: none;
-        position: absolute;
-        bottom: calc(100% + 7px);
-        left: 50%;
-        transform: translateX(-50%);
-        background: #1e293b;
-        color: #f8fafc;
-        font-size: 12px;
-        border-radius: 6px;
-        padding: 8px 12px;
-        white-space: nowrap;
-        z-index: 999;
-        pointer-events: none;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, .28);
-        min-width: 110px;
-      }
-      .ar-tip:hover .ar-tooltip { display: block; }
-
-      /* Tooltip 箭頭 */
-      .ar-tip .ar-tooltip::after {
-        content: '';
-        position: absolute;
-        top: 100%; left: 50%; transform: translateX(-50%);
-        border: 5px solid transparent;
-        border-top-color: #1e293b;
-      }
-
-      /* Tooltip 標題列 */
-      .ar-tt-title { color: #94a3b8; font-size: 10px; margin-bottom: 4px; }
-
-      /* Tooltip 每一筆同仁 */
+      /* Floating tooltip（body 層） — 樣式由 JS 建立，這裡放共用子元素樣式 */
+      .ar-tt-title  { color: #94a3b8; font-size: 10px; margin-bottom: 4px; }
       .ar-tt-person { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
-      .ar-tt-person + .ar-tt-person {
-        border-top: 1px solid #334155; margin-top: 3px; padding-top: 5px;
-      }
+      .ar-tt-person + .ar-tt-person { border-top: 1px solid #334155; margin-top: 3px; padding-top: 5px; }
     </style>
   `;
+
+  // ─── Floating Tooltip（position:fixed，掛在 body，完全不受容器 overflow 限制）───
+
+  /** 確保 body 上只有一個 floating tooltip div，並回傳它 */
+  const ensureFloatingTip = () => {
+    let tip = document.getElementById('ar-floating-tip');
+    if (!tip) {
+      tip = document.createElement('div');
+      tip.id = 'ar-floating-tip';
+      tip.style.cssText =
+        'position:fixed;display:none;z-index:999999;' +
+        'background:#1e293b;color:#f8fafc;font-size:12px;' +
+        'border-radius:6px;padding:8px 12px;white-space:nowrap;' +
+        'pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,.28);' +
+        'min-width:110px;';
+      document.body.appendChild(tip);
+    }
+    return tip;
+  };
+
+  /** 根據 anchor 元素的 viewport 座標，把 tooltip 定位在它上方（空間不足時自動翻轉至下方） */
+  const positionTip = (tip, anchorEl) => {
+    tip.style.display = 'block';
+    const rect = anchorEl.getBoundingClientRect();
+    const tw   = tip.offsetWidth;
+    const th   = tip.offsetHeight;
+    let left = rect.left + rect.width / 2 - tw / 2;
+    let top  = rect.top  - th - 8;
+    if (left < 8) left = 8;
+    if (left + tw > window.innerWidth - 8) left = window.innerWidth - tw - 8;
+    if (top  < 8) top  = rect.bottom + 8; // 翻轉至下方
+    tip.style.left = `${left}px`;
+    tip.style.top  = `${top}px`;
+  };
+
+  /**
+   * 為 preview 容器綁定 mouseover / mouseout 事件委派（每次 mountPreview 後呼叫）。
+   * tooltip 資料從觸發元素的 data-ar-tip（JSON）讀取。
+   */
+  const bindTooltipEvents = (containerEl) => {
+    containerEl.addEventListener('mouseover', (e) => {
+      const anchor = e.target.closest('[data-ar-tip]');
+      if (!anchor) return;
+      const { names, roleId } = JSON.parse(anchor.dataset.arTip);
+      const tip = ensureFloatingTip();
+      let html = '';
+      if (!names || names.length === 0) {
+        html = `<div class="ar-tt-title">角色代碼</div><div class="ar-tt-person">${roleId}</div>`;
+      } else {
+        html =
+          `<div class="ar-tt-title">同仁（${names.length} 位）</div>` +
+          names.map((n) => `<div class="ar-tt-person">${PERSON_ICON}${n}</div>`).join('');
+      }
+      tip.innerHTML = html;
+      positionTip(tip, anchor);
+    });
+
+    containerEl.addEventListener('mouseout', (e) => {
+      const anchor = e.target.closest('[data-ar-tip]');
+      if (!anchor) return;
+      // 移往子元素時不隱藏；真正離開才隱藏
+      if (!anchor.contains(e.relatedTarget)) {
+        const tip = document.getElementById('ar-floating-tip');
+        if (tip) tip.style.display = 'none';
+      }
+    });
+  };
 
   /** 人頭 SVG icon（tooltip 用） */
   const PERSON_ICON = `<svg width="11" height="11" viewBox="0 0 16 16" fill="#94a3b8" style="flex-shrink:0"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 1a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z"/></svg>`;
 
   /**
-   * 產生持有人 Tooltip HTML。
-   * @param {string[]} names  - 持有人姓名陣列（可為空）
-   * @param {string}   roleId - 角色代碼（顯示在 tooltip 底部供進階確認）
-   */
-  const buildTooltipHtml = (names, roleId) => {
-    if (!names || names.length === 0) {
-      // 無持有人資料（群組或未設定）：只顯示角色代碼
-      return `
-        <div class="ar-tooltip">
-          <div class="ar-tt-title">角色代碼</div>
-          <div class="ar-tt-person">${roleId}</div>
-        </div>`;
-    }
-    const personRows = names
-      .map((n) => `<div class="ar-tt-person">${PERSON_ICON}${n}</div>`)
-      .join('');
-    return `
-      <div class="ar-tooltip">
-        <div class="ar-tt-title">同仁（${names.length} 位）</div>
-        ${personRows}
-      </div>`;
-  };
-
-  /**
-   * 繪製單一節點 (圓點 + 文字 + hover tooltip)
-   * @param {object}   role       - roleMap 的節點物件
+   * 繪製單一節點（圓點 + 文字）。
+   * Tooltip 資料存在 data-ar-tip 屬性（JSON），由 bindTooltipEvents 統一處理，
+   * 不在 DOM 裡嵌入 tooltip HTML，完全不受容器 overflow 裁切。
+   *
+   * @param {object}   role         - roleMap 的節點物件
    * @param {'normal'|'current'|'end'|'broken'} state
    * @param {string[]} [holderNames] - 覆寫 role.holderNames（合併節點使用）
    */
@@ -196,21 +209,21 @@
       badge = '<span style="background:#fee2e2;color:#b91c1c;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;">斷鏈</span>';
     }
 
-    // 決定這個節點要顯示的持有人名單
-    const names = holderNames !== undefined ? holderNames : (role.holderNames || []);
+    const names      = holderNames !== undefined ? holderNames : (role.holderNames || []);
     const countBadge = names.length > 1
       ? `<span class="ar-count-badge">${names.length}</span>`
       : '';
-    const tooltipHtml = buildTooltipHtml(names, role.roleId);
+
+    // tooltip 資料序列化為 JSON 存入 data-ar-tip；雙引號改為 &quot; 避免屬性斷裂
+    const tipData = JSON.stringify({ names, roleId: role.roleId }).replace(/"/g, '&quot;');
 
     return `
       <div style="display:flex; align-items:center; padding:8px 0;">
         <div class="${pulseClass}" style="width:14px; height:14px; border-radius:50%; background:${dotBg}; border:2px solid ${dotBorder}; flex-shrink:0; z-index:2; position:relative;"></div>
         <div style="margin-left:10px; min-width:max-content;">
           <div style="font-size:15px; font-weight:700; color:${titleColor}; letter-spacing:0.5px;">
-            <span class="ar-tip" style="cursor:help;">
+            <span class="ar-tip" data-ar-tip="${tipData}">
               ${role.roleName}${countBadge}${badge}
-              ${tooltipHtml}
             </span>
           </div>
         </div>
@@ -334,7 +347,7 @@
   };
 
   /**
-   * 將預覽插入空白欄位或指定 Slot
+   * 將預覽插入空白欄位或指定 Slot，並綁定 floating tooltip 事件。
    */
   const mountPreview = (html) => {
     const old = document.getElementById(PREVIEW_CONTAINER_ID);
@@ -349,25 +362,26 @@
     if (slotEl) {
       slotEl.innerHTML = '';
       slotEl.appendChild(container);
+      bindTooltipEvents(container);
       return;
     }
 
     // 2. 編輯/新增頁：用 kintone API 取得 space 欄位
-    //    不清空整個 spaceEl（03-next-role-dropdown.js 的自訂下拉也住在這裡）
-    //    只替換舊的 preview container，新的插到最前面（下拉保持在下方）
     const spaceEl = kintone.app.record.getSpaceElement('chain_preview');
     if (spaceEl) {
       spaceEl.insertBefore(container, spaceEl.firstChild);
+      bindTooltipEvents(container);
       return;
     }
 
-    // 3. Fallback: 表單底部 (若前兩者都失敗，掛載於畫面下方)
+    // 3. Fallback: 表單底部
     const formEl =
       document.querySelector('.gaia-argoui-app-edit-record') ||
       document.querySelector('.gaia-argoui-app-show-detail') ||
       document.querySelector('#record-gaia');
     if (formEl) {
       formEl.appendChild(container);
+      bindTooltipEvents(container);
     }
   };
 
