@@ -45,13 +45,12 @@
         Array.isArray(rec[F.IS_CHAIN_END].value) &&
         rec[F.IS_CHAIN_END].value.includes(CHECKBOX.CHAIN_END);
 
-      // 個人：從欄位值直接取姓名（0 API）
+      // USER → 直接從欄位值取姓名（0 API）
+      // GROUP → 只存 code，之後僅對可見節點呼叫 /v1/group/users 取成員
       const holderType = rec[F.HOLDER_TYPE].value;
       const holderNames = holderType === HT.USER
         ? (rec[F.HOLDER_USER].value ?? []).map((u) => u.name).filter(Boolean)
-        : []; // 群組成員待後續依可見節點批次查詢
-
-      // 群組：只存 code，之後只查「當前預覽鏈可見」的節點，避免全量查詢
+        : [];
       const holderGroupCode = holderType === HT.GROUP
         ? (rec[F.HOLDER_GROUP]?.value?.[0]?.code ?? null)
         : null;
@@ -62,8 +61,8 @@
         nextRoleId:      rec[F.NEXT_ROLE_ID].value || '',
         prevRoleIds:     [],
         isChainEnd:      isEnd,
-        holderNames,     // USER 類型立即填入；GROUP 預設空陣列，由 fetchGroupMembers 補
-        holderGroupCode, // 僅 GROUP 類型有值
+        holderNames,
+        holderGroupCode,
       });
     }
 
@@ -78,74 +77,57 @@
   };
 
   /**
-   * 走訪上游（遞迴）與下游（迴圈），回傳當前預覽鏈所有可見的 role ID Set。
+   * 走訪上游（遞迴）與下游（迴圈），回傳當前預覽鏈所有可見 role ID 的 Set。
    */
   const getVisibleRoleIds = (currentRoleId, roleMap) => {
     const visible = new Set([currentRoleId]);
-
-    // 上游遞迴
-    const addUpstream = (roleId, seen = new Set()) => {
-      if (seen.has(roleId)) return;
-      seen.add(roleId);
-      const role = roleMap.get(roleId);
-      if (!role) return;
-      role.prevRoleIds.forEach((pId) => { visible.add(pId); addUpstream(pId, seen); });
+    const addUpstream = (id, seen = new Set()) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      (roleMap.get(id)?.prevRoleIds ?? []).forEach((pId) => {
+        visible.add(pId);
+        addUpstream(pId, seen);
+      });
     };
     addUpstream(currentRoleId);
-
-    // 下游線性走訪
     let id = currentRoleId;
     for (let i = 0; i < MAX_DEPTH; i++) {
       const role = roleMap.get(id);
-      if (!role || !role.nextRoleId) break;
+      if (!role?.nextRoleId) break;
       id = role.nextRoleId;
-      if (visible.has(id)) break; // 偵測循環
+      if (visible.has(id)) break;
       visible.add(id);
       if (roleMap.get(id)?.isChainEnd) break;
     }
-
     return visible;
   };
 
   /**
-   * 對可見節點中屬於 GROUP 類型的角色，批次查詢成員並填入 holderNames。
-   * 流程：
-   *   1. 收集可見 GROUP 角色的唯一 groupCode
-   *   2. 一次呼叫 /k/v1/groups 拿到 code → id 對照表
-   *   3. 對每個 group 並行呼叫 /k/v1/group/users 取成員名稱
-   *   4. 將姓名寫回 roleMap（原地修改）
+   * 對可見節點中的 GROUP 角色，呼叫 /v1/group/users（一般使用者可用）取成員姓名，
+   * 並原地寫回 roleMap[role].holderNames。
    *
-   * 查詢失敗時靜默略過，tooltip 退回顯示角色代碼。
+   * 與 05-detail-card.js 使用相同的 API 路徑與參數格式（已驗證可行）。
    */
   const fetchGroupMembers = async (visibleRoleIds, roleMap) => {
-    // 收集可見 GROUP 角色
     const groupRoles = [...visibleRoleIds]
       .map((id) => roleMap.get(id))
-      .filter((r) => r && r.holderGroupCode);
-
+      .filter((r) => r?.holderGroupCode);
     if (!groupRoles.length) return;
 
-    // 去重 code，一次 GET /k/v1/groups
+    // 去重後並行查詢，每個群組一次 API call
     const uniqueCodes = [...new Set(groupRoles.map((r) => r.holderGroupCode))];
-    let codeToId;
-    try {
-      const resp = await kintoneApi('/k/v1/groups', 'GET', { codes: uniqueCodes });
-      codeToId = new Map((resp.groups || []).map((g) => [g.code, g.id]));
-    } catch {
-      return; // 取不到群組資訊時整體略過
-    }
-
-    // 並行查詢各群組成員
     await Promise.all(
-      [...codeToId.entries()].map(async ([code, id]) => {
+      uniqueCodes.map(async (code) => {
         try {
-          const resp = await kintoneApi('/k/v1/group/users', 'GET', { id });
-          const names = (resp.users || []).map((u) => u.name).filter(Boolean);
-          // 將成員寫回所有使用該 groupCode 的可見角色
+          // 路徑 /v1/group/users（不帶 /k），參數 code（不是 id）
+          const resp = await kintone.api('/v1/group/users', 'GET', { code });
+          const names = (resp.users ?? []).map((u) => u.name).filter(Boolean);
           groupRoles
             .filter((r) => r.holderGroupCode === code)
             .forEach((r) => { r.holderNames = names; });
-        } catch { /* 單一群組失敗不影響其他群組 */ }
+        } catch (err) {
+          console.warn(`[chain-preview] 無法取得群組 ${code} 的成員:`, err);
+        }
       }),
     );
   };
