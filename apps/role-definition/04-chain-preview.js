@@ -15,11 +15,12 @@
  * 2026-04-18  Jimmy/Claude  初版建立
  * 2026-04-19  Jimmy/Claude  支援顯示「所有上游路徑」與「下游路徑」，解決多對一匯流顯示問題
  * 2026-04-19  Jimmy/Claude  UI 全面升級：改版為輕量化 Timeline (圓點閃爍 + 連線) 風格
+ * 2026-05-03  Jimmy/Claude  同名節點合併：上游同 roleName 的節點合為一個，hover tooltip 顯示「同仁（N位）」姓名清單
  */
 (() => {
   'use strict';
 
-  const { APP_ID, ROLE_FIELDS: F, CHECKBOX } = window.ApprovalRouting.Config;
+  const { APP_ID, ROLE_FIELDS: F, CHECKBOX, HOLDER_TYPE_OPTIONS: HT } = window.ApprovalRouting.Config;
   const { safeHandler, kintoneApi } = window.ApprovalRouting.Utils;
 
   const PREVIEW_CONTAINER_ID = 'ar-chain-preview-content';
@@ -32,28 +33,39 @@
   const fetchRoleMap = async () => {
     const resp = await kintoneApi('/k/v1/records', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
-      fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END],
+      fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END, F.HOLDER_TYPE, F.HOLDER_USER],
       query: `${F.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,
     });
 
     const map = new Map();
 
-    // 第一層迴圈：建立基礎節點，並多準備一個 prevRoleIds 陣列來裝「誰指向我」
+    // 第一層迴圈：建立基礎節點
     for (const rec of resp.records) {
       const isEnd =
         Array.isArray(rec[F.IS_CHAIN_END].value) &&
         rec[F.IS_CHAIN_END].value.includes(CHECKBOX.CHAIN_END);
+
+      // 解析持有人姓名（個人類型才抓；群組類型本次不處理）
+      const holderType = rec[F.HOLDER_TYPE].value;
+      let holderNames = [];
+      if (holderType === HT.USER) {
+        const users = rec[F.HOLDER_USER].value;
+        if (Array.isArray(users)) {
+          holderNames = users.map((u) => u.name).filter(Boolean);
+        }
+      }
+
       map.set(rec[F.ROLE_ID].value, {
-        roleId: rec[F.ROLE_ID].value,
-        roleName: rec[F.ROLE_NAME].value,
-        nextRoleId: rec[F.NEXT_ROLE_ID].value || '',
-        prevRoleIds: [], // 關鍵新增：用來記錄上游節點
-        isChainEnd: isEnd,
+        roleId:      rec[F.ROLE_ID].value,
+        roleName:    rec[F.ROLE_NAME].value,
+        nextRoleId:  rec[F.NEXT_ROLE_ID].value || '',
+        prevRoleIds: [],
+        isChainEnd:  isEnd,
+        holderNames, // 個人持有人姓名陣列（群組為空陣列）
       });
     }
 
-    // 第二層迴圈：建立反向關聯 (把上游 ID 塞入下游的 prevRoleIds 裡)
-    // 時間複雜度 O(N)，極速完成
+    // 第二層迴圈：建立反向關聯
     for (const [id, role] of map.entries()) {
       if (role.nextRoleId && map.has(role.nextRoleId)) {
         map.get(role.nextRoleId).prevRoleIds.push(id);
@@ -68,64 +80,138 @@
   // 1. 注入動畫與連線的 CSS
   const timelineStyles = `
     <style>
-      /* 定義閃爍呼吸燈動畫 */
       @keyframes ar-pulse-anim {
-        0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6); }
-        70% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        0%   { box-shadow: 0 0 0 0   rgba(59, 130, 246, 0.6); }
+        70%  { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);   }
+        100% { box-shadow: 0 0 0 0   rgba(59, 130, 246, 0);   }
       }
-      .ar-pulse {
-        animation: ar-pulse-anim 2s infinite;
-      }
+      .ar-pulse { animation: ar-pulse-anim 2s infinite; }
+
       /* 水平連接線 */
-      .ar-line {
-        width: 32px; height: 2px; background: #cbd5e1; margin: 0 8px; flex-shrink: 0;
-      }
+      .ar-line { width: 32px; height: 2px; background: #cbd5e1; margin: 0 8px; flex-shrink: 0; }
+
       /* 多方匯流時的垂直分組線 */
-      .ar-tree-border {
-        border-right: 2px solid #cbd5e1; padding-right: 16px; margin-right: 4px;
+      .ar-tree-border { border-right: 2px solid #cbd5e1; padding-right: 16px; margin-right: 4px; }
+
+      /* 人數 badge */
+      .ar-count-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        background: #f1f5f9; color: #64748b; font-size: 10px; font-weight: 700;
+        width: 17px; height: 17px; border-radius: 50%;
+        margin-left: 5px; border: 1px solid #cbd5e1; flex-shrink: 0;
+      }
+
+      /* Tooltip 容器 */
+      .ar-tip { position: relative; display: inline-flex; align-items: center; }
+
+      /* Tooltip 浮層（hover 才顯示） */
+      .ar-tip .ar-tooltip {
+        display: none;
+        position: absolute;
+        bottom: calc(100% + 7px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1e293b;
+        color: #f8fafc;
+        font-size: 12px;
+        border-radius: 6px;
+        padding: 8px 12px;
+        white-space: nowrap;
+        z-index: 999;
+        pointer-events: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, .28);
+        min-width: 110px;
+      }
+      .ar-tip:hover .ar-tooltip { display: block; }
+
+      /* Tooltip 箭頭 */
+      .ar-tip .ar-tooltip::after {
+        content: '';
+        position: absolute;
+        top: 100%; left: 50%; transform: translateX(-50%);
+        border: 5px solid transparent;
+        border-top-color: #1e293b;
+      }
+
+      /* Tooltip 標題列 */
+      .ar-tt-title { color: #94a3b8; font-size: 10px; margin-bottom: 4px; }
+
+      /* Tooltip 每一筆同仁 */
+      .ar-tt-person { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+      .ar-tt-person + .ar-tt-person {
+        border-top: 1px solid #334155; margin-top: 3px; padding-top: 5px;
       }
     </style>
   `;
 
+  /** 人頭 SVG icon（tooltip 用） */
+  const PERSON_ICON = `<svg width="11" height="11" viewBox="0 0 16 16" fill="#94a3b8" style="flex-shrink:0"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 1a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z"/></svg>`;
+
   /**
-   * 繪製單一節點 (圓點 + 文字)
+   * 產生持有人 Tooltip HTML。
+   * @param {string[]} names  - 持有人姓名陣列（可為空）
+   * @param {string}   roleId - 角色代碼（顯示在 tooltip 底部供進階確認）
    */
-  const renderNodeHtml = (role, state = 'normal') => {
-    let dotBg = '#e2e8f0';
-    let dotBorder = '#94a3b8';
+  const buildTooltipHtml = (names, roleId) => {
+    if (!names || names.length === 0) {
+      // 無持有人資料（群組或未設定）：只顯示角色代碼
+      return `
+        <div class="ar-tooltip">
+          <div class="ar-tt-title">角色代碼</div>
+          <div class="ar-tt-person">${roleId}</div>
+        </div>`;
+    }
+    const personRows = names
+      .map((n) => `<div class="ar-tt-person">${PERSON_ICON}${n}</div>`)
+      .join('');
+    return `
+      <div class="ar-tooltip">
+        <div class="ar-tt-title">同仁（${names.length} 位）</div>
+        ${personRows}
+      </div>`;
+  };
+
+  /**
+   * 繪製單一節點 (圓點 + 文字 + hover tooltip)
+   * @param {object}   role       - roleMap 的節點物件
+   * @param {'normal'|'current'|'end'|'broken'} state
+   * @param {string[]} [holderNames] - 覆寫 role.holderNames（合併節點使用）
+   */
+  const renderNodeHtml = (role, state = 'normal', holderNames) => {
+    let dotBg      = '#e2e8f0';
+    let dotBorder  = '#94a3b8';
     let titleColor = '#64748b';
     let pulseClass = '';
-    let badge = '';
+    let badge      = '';
 
     if (state === 'current') {
-      dotBg = '#3b82f6';
-      dotBorder = '#2563eb';
-      titleColor = '#1d4ed8';
-      pulseClass = 'ar-pulse'; // 掛載閃爍動畫
-      badge =
-        '<span style="background:#e0e7ff; color:#4f46e5; font-size:11px; padding:2px 8px; border-radius:12px; margin-left:8px; font-weight:600; border:1px solid #c7d2fe;">目前</span>';
+      dotBg = '#3b82f6'; dotBorder = '#2563eb'; titleColor = '#1d4ed8';
+      pulseClass = 'ar-pulse';
+      badge = '<span style="background:#e0e7ff;color:#4f46e5;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;border:1px solid #c7d2fe;">目前</span>';
     } else if (state === 'end') {
-      dotBg = '#22c55e';
-      dotBorder = '#16a34a';
-      titleColor = '#15803d';
-      badge =
-        '<span style="background:#dcfce7; color:#16a34a; font-size:11px; padding:2px 8px; border-radius:12px; margin-left:8px; font-weight:600; border:1px solid #bbf7d0;">終點</span>';
+      dotBg = '#22c55e'; dotBorder = '#16a34a'; titleColor = '#15803d';
+      badge = '<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;border:1px solid #bbf7d0;">終點</span>';
     } else if (state === 'broken') {
-      dotBg = '#ef4444';
-      dotBorder = '#dc2626';
-      titleColor = '#b91c1c';
-      badge =
-        '<span style="background:#fee2e2; color:#b91c1c; font-size:11px; padding:2px 8px; border-radius:12px; margin-left:8px; font-weight:600;">斷鏈</span>';
+      dotBg = '#ef4444'; dotBorder = '#dc2626'; titleColor = '#b91c1c';
+      badge = '<span style="background:#fee2e2;color:#b91c1c;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;">斷鏈</span>';
     }
 
-    return `
-      <div title="角色代碼: ${role.roleId}" style="display: flex; align-items: center; padding: 8px 0; cursor: help;">
-        <div class="${pulseClass}" style="width: 14px; height: 14px; border-radius: 50%; background: ${dotBg}; border: 2px solid ${dotBorder}; flex-shrink: 0; z-index: 2; position: relative;"></div>
+    // 決定這個節點要顯示的持有人名單
+    const names = holderNames !== undefined ? holderNames : (role.holderNames || []);
+    const countBadge = names.length > 1
+      ? `<span class="ar-count-badge">${names.length}</span>`
+      : '';
+    const tooltipHtml = buildTooltipHtml(names, role.roleId);
 
-        <div style="margin-left: 10px; min-width: max-content;">
-          <div style="font-size: 15px; font-weight: 700; color: ${titleColor}; display: flex; align-items: center; letter-spacing: 0.5px;">
-            ${role.roleName}${badge}
+    return `
+      <div style="display:flex; align-items:center; padding:8px 0;">
+        <div class="${pulseClass}" style="width:14px; height:14px; border-radius:50%; background:${dotBg}; border:2px solid ${dotBorder}; flex-shrink:0; z-index:2; position:relative;"></div>
+        <div style="margin-left:10px; min-width:max-content;">
+          <div style="font-size:15px; font-weight:700; color:${titleColor}; letter-spacing:0.5px;">
+            <span class="ar-tip" style="cursor:help;">
+              ${role.roleName}${countBadge}${badge}
+              ${tooltipHtml}
+            </span>
           </div>
         </div>
       </div>
@@ -134,44 +220,51 @@
 
   /**
    * [遞迴] 繪製上游 (多源頭樹狀結構)
+   *
+   * 同 roleName 的兄弟節點合併為一個視覺節點：
+   *   - 右上角顯示人數 badge（>1 時）
+   *   - hover tooltip 列出所有持有人姓名
    */
   const buildUpstreamHtml = (roleId, roleMap, visited) => {
     const role = roleMap.get(roleId);
     if (!role || role.prevRoleIds.length === 0) return '';
 
-    // 防無限循環
     if (visited.has(roleId))
       return `<div style="color:red;font-size:12px;">(循環錯誤)</div>`;
     visited.add(roleId);
 
-    // 遞迴組合所有的「父母」節點
-    const parentsHtml = role.prevRoleIds
-      .map((pId) => {
-        const pRole = roleMap.get(pId);
-        if (!pRole) return '';
+    // 將同層兄弟（prevRoleIds）依 roleName 分組合併
+    // Map<roleName, { representative: role, allNames: string[] }>
+    const grouped = new Map();
+    for (const pId of role.prevRoleIds) {
+      const pRole = roleMap.get(pId);
+      if (!pRole) continue;
+      if (!grouped.has(pRole.roleName)) {
+        grouped.set(pRole.roleName, { representative: pRole, allNames: [...pRole.holderNames] });
+      } else {
+        grouped.get(pRole.roleName).allNames.push(...pRole.holderNames);
+      }
+    }
 
-        const grandParentsHtml = buildUpstreamHtml(
-          pId,
-          roleMap,
-          new Set(visited),
-        );
-        const nodeHtml = renderNodeHtml(pRole, 'normal');
-
+    // 渲染每一個合併後的「代表節點」（同名的只渲染一次）
+    // 注意：grand-parents 也只遞迴進代表節點（prevRoleIds[0]），避免重複
+    const parentsHtml = [...grouped.values()]
+      .map(({ representative: pRole, allNames }) => {
+        const grandParentsHtml = buildUpstreamHtml(pRole.roleId, roleMap, new Set(visited));
+        const nodeHtml = renderNodeHtml(pRole, 'normal', allNames);
         return `
-        <div style="display: flex; align-items: center;">
-          ${grandParentsHtml}
-          ${nodeHtml}
-        </div>
-      `;
+          <div style="display:flex; align-items:center;">
+            ${grandParentsHtml}
+            ${nodeHtml}
+          </div>`;
       })
       .join('');
 
-    // 智慧判斷：如果是單一來源，就不畫垂直分組線；多來源才畫
-    const treeClass = role.prevRoleIds.length > 1 ? 'ar-tree-border' : '';
+    const treeClass = grouped.size > 1 ? 'ar-tree-border' : '';
 
     return `
-      <div style="display: flex; align-items: center;">
-        <div class="${treeClass}" style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display:flex; align-items:center;">
+        <div class="${treeClass}" style="display:flex; flex-direction:column; gap:8px;">
           ${parentsHtml}
         </div>
         <div class="ar-line"></div>
