@@ -33,7 +33,7 @@
   const fetchRoleMap = async () => {
     const resp = await kintoneApi('/k/v1/records', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
-      fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END, F.HOLDER_TYPE, F.HOLDER_USER],
+      fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END, F.HOLDER_TYPE, F.HOLDER_USER, F.HOLDER_GROUP],
       query: `${F.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,
     });
 
@@ -56,9 +56,7 @@
         }
       } else if (holderType === HT.GROUP) {
         // 群組：kintone.getMembersByGroupCode() 為前端 JS API，不消耗 REST API 次數
-        const groupCode = Array.isArray(rec[F.HOLDER_GROUP].value) && rec[F.HOLDER_GROUP].value[0]
-          ? rec[F.HOLDER_GROUP].value[0].code
-          : null;
+        const groupCode = rec[F.HOLDER_GROUP]?.value?.[0]?.code ?? null;
         if (groupCode) {
           try {
             const members = kintone.getMembersByGroupCode(groupCode) || [];
