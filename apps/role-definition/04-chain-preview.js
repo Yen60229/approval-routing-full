@@ -56,13 +56,17 @@
         }
       } else if (holderType === HT.GROUP) {
         // 群組：kintone.getMembersByGroupCode() 為前端 JS API，不消耗 REST API 次數
-        const groupCode = rec[F.HOLDER_GROUP]?.value?.[0]?.code ?? null;
+        const groupVal  = rec[F.HOLDER_GROUP]?.value;
+        const groupCode = Array.isArray(groupVal) ? groupVal[0]?.code : null;
+        console.log('[chain-preview] GROUP role:', rec[F.ROLE_ID].value,
+          '| groupVal:', JSON.stringify(groupVal), '| groupCode:', groupCode);
         if (groupCode) {
           try {
             const members = kintone.getMembersByGroupCode(groupCode) || [];
+            console.log('[chain-preview] getMembersByGroupCode result:', members);
             holderNames = members.map((m) => m.name).filter(Boolean);
-          } catch {
-            // 群組不存在或無權限時靜默略過，tooltip 改顯示角色代碼
+          } catch (err) {
+            console.warn('[chain-preview] getMembersByGroupCode failed:', groupCode, err);
           }
         }
       }
