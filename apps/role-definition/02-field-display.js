@@ -110,10 +110,17 @@
   const renderIndexHolderColumn = (records) => {
     injectIndexStyle();
 
-    // 1. 標題改名（用 innerText 偵測、innerHTML 替換，保留排序等子元素）
+    // 1. 標題改名：只動文字節點，不碰 kintone 注入的 resize handle 等子元素
+    //    （innerHTML 整個替換會讓 resize handle 失去事件監聽器，導致欄寬鎖死）
     document.querySelectorAll('th').forEach((th) => {
-      if (th.innerText.includes('簽核者（個人）')) {
-        th.innerHTML = th.innerHTML.replace('簽核者（個人）', '簽核者');
+      if (!th.innerText.includes('簽核者（個人）')) return;
+      const walker = document.createTreeWalker(th, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.nodeValue.includes('簽核者（個人）')) {
+          node.nodeValue = node.nodeValue.replace('簽核者（個人）', '簽核者');
+          break; // 只改第一個符合的文字節點即可
+        }
       }
     });
 
