@@ -45,39 +45,25 @@
         Array.isArray(rec[F.IS_CHAIN_END].value) &&
         rec[F.IS_CHAIN_END].value.includes(CHECKBOX.CHAIN_END);
 
-      // 解析持有人姓名
+      // 個人：從欄位值直接取姓名（0 API）
       const holderType = rec[F.HOLDER_TYPE].value;
-      let holderNames = [];
-      if (holderType === HT.USER) {
-        // 個人：直接從欄位值取名稱，零 API 消耗
-        const users = rec[F.HOLDER_USER].value;
-        if (Array.isArray(users)) {
-          holderNames = users.map((u) => u.name).filter(Boolean);
-        }
-      } else if (holderType === HT.GROUP) {
-        // 群組：kintone.getMembersByGroupCode() 為前端 JS API，不消耗 REST API 次數
-        const groupVal  = rec[F.HOLDER_GROUP]?.value;
-        const groupCode = Array.isArray(groupVal) ? groupVal[0]?.code : null;
-        console.log('[chain-preview] GROUP role:', rec[F.ROLE_ID].value,
-          '| groupVal:', JSON.stringify(groupVal), '| groupCode:', groupCode);
-        if (groupCode) {
-          try {
-            const members = kintone.getMembersByGroupCode(groupCode) || [];
-            console.log('[chain-preview] getMembersByGroupCode result:', members);
-            holderNames = members.map((m) => m.name).filter(Boolean);
-          } catch (err) {
-            console.warn('[chain-preview] getMembersByGroupCode failed:', groupCode, err);
-          }
-        }
-      }
+      const holderNames = holderType === HT.USER
+        ? (rec[F.HOLDER_USER].value ?? []).map((u) => u.name).filter(Boolean)
+        : []; // 群組成員待後續依可見節點批次查詢
+
+      // 群組：只存 code，之後只查「當前預覽鏈可見」的節點，避免全量查詢
+      const holderGroupCode = holderType === HT.GROUP
+        ? (rec[F.HOLDER_GROUP]?.value?.[0]?.code ?? null)
+        : null;
 
       map.set(rec[F.ROLE_ID].value, {
-        roleId:      rec[F.ROLE_ID].value,
-        roleName:    rec[F.ROLE_NAME].value,
-        nextRoleId:  rec[F.NEXT_ROLE_ID].value || '',
-        prevRoleIds: [],
-        isChainEnd:  isEnd,
-        holderNames, // 個人持有人姓名陣列（群組為空陣列）
+        roleId:          rec[F.ROLE_ID].value,
+        roleName:        rec[F.ROLE_NAME].value,
+        nextRoleId:      rec[F.NEXT_ROLE_ID].value || '',
+        prevRoleIds:     [],
+        isChainEnd:      isEnd,
+        holderNames,     // USER 類型立即填入；GROUP 預設空陣列，由 fetchGroupMembers 補
+        holderGroupCode, // 僅 GROUP 類型有值
       });
     }
 
@@ -89,6 +75,79 @@
     }
 
     return map;
+  };
+
+  /**
+   * 走訪上游（遞迴）與下游（迴圈），回傳當前預覽鏈所有可見的 role ID Set。
+   */
+  const getVisibleRoleIds = (currentRoleId, roleMap) => {
+    const visible = new Set([currentRoleId]);
+
+    // 上游遞迴
+    const addUpstream = (roleId, seen = new Set()) => {
+      if (seen.has(roleId)) return;
+      seen.add(roleId);
+      const role = roleMap.get(roleId);
+      if (!role) return;
+      role.prevRoleIds.forEach((pId) => { visible.add(pId); addUpstream(pId, seen); });
+    };
+    addUpstream(currentRoleId);
+
+    // 下游線性走訪
+    let id = currentRoleId;
+    for (let i = 0; i < MAX_DEPTH; i++) {
+      const role = roleMap.get(id);
+      if (!role || !role.nextRoleId) break;
+      id = role.nextRoleId;
+      if (visible.has(id)) break; // 偵測循環
+      visible.add(id);
+      if (roleMap.get(id)?.isChainEnd) break;
+    }
+
+    return visible;
+  };
+
+  /**
+   * 對可見節點中屬於 GROUP 類型的角色，批次查詢成員並填入 holderNames。
+   * 流程：
+   *   1. 收集可見 GROUP 角色的唯一 groupCode
+   *   2. 一次呼叫 /k/v1/groups 拿到 code → id 對照表
+   *   3. 對每個 group 並行呼叫 /k/v1/group/users 取成員名稱
+   *   4. 將姓名寫回 roleMap（原地修改）
+   *
+   * 查詢失敗時靜默略過，tooltip 退回顯示角色代碼。
+   */
+  const fetchGroupMembers = async (visibleRoleIds, roleMap) => {
+    // 收集可見 GROUP 角色
+    const groupRoles = [...visibleRoleIds]
+      .map((id) => roleMap.get(id))
+      .filter((r) => r && r.holderGroupCode);
+
+    if (!groupRoles.length) return;
+
+    // 去重 code，一次 GET /k/v1/groups
+    const uniqueCodes = [...new Set(groupRoles.map((r) => r.holderGroupCode))];
+    let codeToId;
+    try {
+      const resp = await kintoneApi('/k/v1/groups', 'GET', { codes: uniqueCodes });
+      codeToId = new Map((resp.groups || []).map((g) => [g.code, g.id]));
+    } catch {
+      return; // 取不到群組資訊時整體略過
+    }
+
+    // 並行查詢各群組成員
+    await Promise.all(
+      [...codeToId.entries()].map(async ([code, id]) => {
+        try {
+          const resp = await kintoneApi('/k/v1/group/users', 'GET', { id });
+          const names = (resp.users || []).map((u) => u.name).filter(Boolean);
+          // 將成員寫回所有使用該 groupCode 的可見角色
+          groupRoles
+            .filter((r) => r.holderGroupCode === code)
+            .forEach((r) => { r.holderNames = names; });
+        } catch { /* 單一群組失敗不影響其他群組 */ }
+      }),
+    );
   };
 
   // --- 全新的 Timeline 渲染引擎 ---
@@ -427,12 +486,15 @@
     const liveEntry = roleMap.get(currentRoleId);
     if (liveEntry) {
       try {
-        // kintone.app.record.get() 在 edit/detail/create 頁均可用
         const rec = kintone.app.record.get().record;
-        liveEntry.nextRoleId  = rec[F.NEXT_ROLE_ID].value || '';
-        liveEntry.isChainEnd  = (rec[F.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
+        liveEntry.nextRoleId = rec[F.NEXT_ROLE_ID].value || '';
+        liveEntry.isChainEnd = (rec[F.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
       } catch { /* detail 頁 or 無 record context → 跳過，使用 DB 值 */ }
     }
+
+    // ③ 只查當前預覽鏈可見的 GROUP 角色成員（避免全量查詢）
+    const visibleIds = getVisibleRoleIds(currentRoleId, roleMap);
+    await fetchGroupMembers(visibleIds, roleMap);
 
     const html = renderFullChainHtml(currentRoleId, roleMap);
     mountPreview(html);
