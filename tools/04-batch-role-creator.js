@@ -1468,16 +1468,46 @@
     return record;
   }
 
-  /** 全部列驗證 + 建構（整批送出用） */
+  /**
+   * 全部列驗證 + 建構（整批送出用）。
+   *
+   * 永遠回傳 { records, skipped }：
+   *   records  — 通過驗證且成功建構的 kintone record 物件陣列（含 role_id）
+   *   skipped  — 被略過的列，格式 [{ name, reason }]
+   *
+   * 驗證或建構任一失敗時：
+   *   - 略過該列，繼續處理其餘列（不中斷整批）
+   *   - role_id 流水號只計入成功的列，不留空缺
+   */
   function buildRecords(startNum = 1) {
     const rows = [...document.querySelectorAll('tr.br-data-row')];
-    rows.forEach(validateRow);
-    const roleIds = generateRoleIds(rows.length, startNum);
-    return rows.map((row, i) => {
-      const rec = buildRowRecord(row);
-      rec.role_id = { value: roleIds[i] };
-      return rec;
+    const skipped = [];
+    const records  = [];
+    let seqNum = startNum;
+
+    rows.forEach((row) => {
+      const nameEl = row.querySelector('.person-name');
+      const nameDisplay = nameEl ? nameEl.textContent.trim() : (row.dataset.code || '未知人員');
+
+      // 步驟 1：欄位驗證
+      try {
+        validateRow(row);
+      } catch (err) {
+        skipped.push({ name: nameDisplay, reason: err.message });
+        return;
+      }
+
+      // 步驟 2：建構 record 物件（可能因群組未選等原因拋錯）
+      try {
+        const rec = buildRowRecord(row);
+        rec.role_id = { value: `ROLE_${String(seqNum++).padStart(4, '0')}` };
+        records.push(rec);
+      } catch (err) {
+        skipped.push({ name: nameDisplay, reason: err.message });
+      }
     });
+
+    return { records, skipped };
   }
 
   /** 更新單列的儲存狀態圖示：'saved' | 'dirty' | '' */
@@ -1624,21 +1654,19 @@
     const btn = document.getElementById('br-btn-submit');
     if (btn.disabled) return;
 
-    // ① 先做欄位驗證（用暫時序號，確認資料無誤）
-    let records;
-    try {
-      records = buildRecords(1);
-    } catch (error) {
-      alert(error.message);
+    // ① 先做快速驗證（暫用序號 1），確認是否有可送資料
+    const { records: preCheck, skipped: preSkipped } = buildRecords(1);
+
+    if (!preCheck.length) {
+      const msg = preSkipped.length
+        ? `所有 ${preSkipped.length} 列資料驗證失敗，無可送出的資料。`
+        : '目前沒有可送出的資料。';
+      alert(msg);
       return;
     }
 
-    if (!records.length) {
-      alert('目前沒有可送出的資料。');
-      return;
-    }
-
-    if (!confirm(`確定要建立 ${records.length} 筆角色記錄嗎？`)) return;
+    const skipNote = preSkipped.length ? `\n（${preSkipped.length} 列驗證失敗，將略過）` : '';
+    if (!confirm(`確定要建立 ${preCheck.length} 筆角色記錄嗎？${skipNote}`)) return;
 
     const statusId = 'br-submit-status';
     btn.disabled = true;
@@ -1656,10 +1684,11 @@
       btn.textContent = '建立角色記錄';
       return;
     }
-    try {
-      records = buildRecords(maxNum + 1);
-    } catch (error) {
-      showStatus(statusId, 'error', error.message);
+
+    const { records, skipped: validationSkipped } = buildRecords(maxNum + 1);
+
+    if (!records.length) {
+      showStatus(statusId, 'error', '重建記錄時所有列均驗證失敗，無可建立的資料。');
       btn.disabled = false;
       btn.textContent = '建立角色記錄';
       return;
@@ -1673,35 +1702,107 @@
       btn.textContent = '建立角色記錄';
       return;
     }
+
     const chunkSize = 100;
     let created = 0;
+    /** @type {{ name: string; reason: string }[]} */
+    const apiFailed = [];
 
-    try {
-      console.log('[batch-role-creator] submitBatch appId:', appId, '| startNum:', maxNum + 1);
-      console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
-      showStatus(statusId, 'info', `準備建立 ${records.length} 筆（從 ROLE_${String(maxNum + 1).padStart(4, '0')} 起）...`);
-      for (let i = 0; i < records.length; i += chunkSize) {
-        const chunk = records.slice(i, i + chunkSize);
-        showStatus(statusId, 'info', `建立中... ${created} / ${records.length}`);
+    console.log('[batch-role-creator] submitBatch appId:', appId, '| startNum:', maxNum + 1);
+    console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
+    showStatus(
+      statusId,
+      'info',
+      `準備建立 ${records.length} 筆（從 ROLE_${String(maxNum + 1).padStart(4, '0')} 起）${validationSkipped.length ? `，略過 ${validationSkipped.length} 筆驗證失敗` : ''}...`,
+    );
+
+    for (let i = 0; i < records.length; i += chunkSize) {
+      const chunk = records.slice(i, i + chunkSize);
+      showStatus(statusId, 'info', `建立中... ${created} / ${records.length}`);
+
+      try {
         await kintone.api(kintone.api.url('/k/v1/records', true), 'POST', {
           app: appId,
           records: chunk,
         });
         created += chunk.length;
+      } catch (chunkErr) {
+        // chunk 整批失敗 → 逐筆重試，把能過的記錄建起來
+        console.warn('[submitBatch] chunk failed, retrying one by one:', formatKintoneError(chunkErr));
+        for (const rec of chunk) {
+          try {
+            await kintone.api(kintone.api.url('/k/v1/records', true), 'POST', {
+              app: appId,
+              records: [rec],
+            });
+            created++;
+          } catch (rowErr) {
+            const roleName = (rec.role_name && rec.role_name.value) || (rec.role_id && rec.role_id.value) || '未知';
+            apiFailed.push({ name: roleName, reason: formatKintoneError(rowErr) });
+          }
+        }
       }
+    }
 
+    // ③ 彙整所有跳過清單
+    const allSkipped = [
+      ...validationSkipped.map((s) => ({ ...s, type: '驗證失敗' })),
+      ...apiFailed.map((s) => ({ ...s, type: 'API 失敗' })),
+    ];
+
+    if (allSkipped.length) {
+      // 有跳過 → 顯示 SweetAlert 跳過清單，不自動重整
+      const tableRows = allSkipped
+        .map(
+          (s) =>
+            `<tr>
+              <td style="padding:5px 8px;border:1px solid #ddd;text-align:left">${s.name}</td>
+              <td style="padding:5px 8px;border:1px solid #ddd;text-align:left">${s.type}</td>
+              <td style="padding:5px 8px;border:1px solid #ddd;text-align:left">${s.reason}</td>
+            </tr>`,
+        )
+        .join('');
+
+      showStatus(
+        statusId,
+        'info',
+        `完成：${created} 筆建立成功，${allSkipped.length} 筆略過（見下方彈窗）。`,
+      );
+
+      const showSkipped = typeof Swal !== 'undefined' && typeof Swal.fire === 'function'
+        ? Swal.fire({
+            title: `略過清單（共 ${allSkipped.length} 筆）`,
+            html: `
+              <p style="margin-bottom:8px">以下資料已略過，請人工確認並處理：</p>
+              <div style="max-height:320px;overflow-y:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                  <thead>
+                    <tr style="background:#f5f5f5">
+                      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left">角色名稱</th>
+                      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left">類型</th>
+                      <th style="padding:6px 8px;border:1px solid #ddd;text-align:left">原因</th>
+                    </tr>
+                  </thead>
+                  <tbody>${tableRows}</tbody>
+                </table>
+              </div>`,
+            icon: 'warning',
+            width: '680px',
+            confirmButtonText: '我知道了',
+          })
+        : Promise.resolve(alert(
+            `略過 ${allSkipped.length} 筆：\n` +
+            allSkipped.map((s) => `・${s.name}（${s.type}）：${s.reason}`).join('\n'),
+          ));
+
+      await showSkipped;
+      btn.disabled = false;
+      btn.textContent = '建立角色記錄';
+    } else {
+      // 全部成功 → 自動重整
       showStatus(statusId, 'success', `建立完成，共新增 ${created} 筆角色記錄。畫面即將重新整理。`);
       btn.textContent = '建立完成';
       setTimeout(() => location.reload(), 1500);
-    } catch (error) {
-      console.error('[batch-role-creator] submitBatch error', error);
-      showStatus(
-        statusId,
-        'error',
-        `建立失敗，目前已建立 ${created} 筆。錯誤訊息：${error.message || '未知錯誤'}`,
-      );
-      btn.disabled = false;
-      btn.textContent = '建立角色記錄';
     }
   }
 
