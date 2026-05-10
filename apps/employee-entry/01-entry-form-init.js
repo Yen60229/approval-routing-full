@@ -44,14 +44,19 @@
       query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") order by ${RF.ROLE_NAME} asc limit 500`,
     });
 
-    return resp.records.map((r) => ({
-      roleId: r[RF.ROLE_ID].value,
-      roleName: r[RF.ROLE_NAME].value,
-    }));
+    const seen = new Set();
+    return resp.records
+      .map((r) => ({ roleId: r[RF.ROLE_ID].value, roleName: r[RF.ROLE_NAME].value }))
+      .filter(({ roleName }) => {
+        if (seen.has(roleName)) return false;
+        seen.add(roleName);
+        return true;
+      });
   };
 
   /**
-   * 建立下拉選單 DOM
+   * 建立可搜尋下拉元件 DOM
+   * 以 input + 浮動清單取代原生 select，支援打字過濾
    */
   const buildDropdownUI = (roles, currentValue) => {
     const container = document.createElement('div');
@@ -60,28 +65,108 @@
 
     const label = document.createElement('label');
     label.textContent = '起點角色：';
-    label.style.cssText = 'font-weight: bold; font-size: 14px; margin-right: 8px;';
-    label.setAttribute('for', DROPDOWN_ID);
+    label.style.cssText = 'font-weight: bold; font-size: 14px; display: block; margin-bottom: 6px;';
 
-    const select = document.createElement('select');
-    select.id = DROPDOWN_ID;
-    select.style.cssText = 'font-size: 14px; padding: 6px 12px; min-width: 250px; border: 1px solid #ccc; border-radius: 4px;';
+    // input + 浮動清單的外層（position:relative 讓清單能絕對定位）
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position: relative; display: inline-block;';
 
-    const emptyOpt = document.createElement('option');
-    emptyOpt.value = '';
-    emptyOpt.textContent = '— 請選擇起點角色 —';
-    select.appendChild(emptyOpt);
+    // 搜尋輸入框
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = DROPDOWN_ID;
+    input.placeholder = '輸入角色名稱搜尋…';
+    input.autocomplete = 'off';
+    input.style.cssText =
+      'font-size: 14px; padding: 6px 12px; min-width: 280px; ' +
+      'border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;';
 
-    for (const role of roles) {
-      const opt = document.createElement('option');
-      opt.value = role.roleId;
-      opt.textContent = `${role.roleName}（${role.roleId}）`;
-      if (role.roleId === currentValue) opt.selected = true;
-      select.appendChild(opt);
-    }
+    // 初始顯示目前選中的角色名稱
+    const currentRole = roles.find((r) => r.roleId === currentValue);
+    if (currentRole) input.value = currentRole.roleName;
 
+    // 浮動選項清單
+    const panel = document.createElement('div');
+    panel.style.cssText =
+      'position: absolute; top: calc(100% + 2px); left: 0; min-width: 280px; ' +
+      'max-height: 240px; overflow-y: auto; background: #fff; ' +
+      'border: 1px solid #ccc; border-radius: 4px; ' +
+      'box-shadow: 0 4px 12px rgba(0,0,0,.12); z-index: 9999; display: none;';
+
+    let selectedRoleId = currentValue;
+
+    /** 依關鍵字重繪清單 */
+    const renderItems = (keyword) => {
+      const filtered = keyword
+        ? roles.filter((r) => r.roleName.includes(keyword))
+        : roles;
+
+      panel.innerHTML = '';
+
+      if (filtered.length === 0) {
+        const empty = document.createElement('div');
+        empty.textContent = '找不到符合的角色';
+        empty.style.cssText = 'padding: 10px 12px; color: #999; font-size: 14px;';
+        panel.appendChild(empty);
+        return;
+      }
+
+      for (const role of filtered) {
+        const item = document.createElement('div');
+        item.textContent = role.roleName;
+        item.style.cssText =
+          'padding: 8px 12px; font-size: 14px; cursor: pointer; ' +
+          (role.roleId === selectedRoleId ? 'background:#e0e7ff; font-weight:600;' : '');
+
+        item.addEventListener('mouseenter', () => { item.style.background = '#f0f4ff'; });
+        item.addEventListener('mouseleave', () => {
+          item.style.background = role.roleId === selectedRoleId ? '#e0e7ff' : '';
+        });
+
+        // mousedown 優先於 blur，用 preventDefault 確保 blur 之前完成選取
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          selectedRoleId = role.roleId;
+          input.value = role.roleName;
+          panel.style.display = 'none';
+
+          // 同步寫入 kintone 欄位
+          const rec = kintone.app.record.get();
+          rec.record[F.ENTRY_ROLE_ID].value = role.roleId;
+          kintone.app.record.set(rec);
+        });
+
+        panel.appendChild(item);
+      }
+    };
+
+    input.addEventListener('focus', () => {
+      renderItems(input.value);
+      panel.style.display = 'block';
+    });
+
+    input.addEventListener('input', () => {
+      renderItems(input.value);
+      panel.style.display = 'block';
+    });
+
+    input.addEventListener('blur', () => {
+      // 延遲讓 mousedown 先執行完
+      setTimeout(() => {
+        panel.style.display = 'none';
+        // 若輸入的文字不符合任何角色，還原成最後一次有效選取
+        const matched = roles.find((r) => r.roleName === input.value);
+        if (!matched) {
+          const last = roles.find((r) => r.roleId === selectedRoleId);
+          input.value = last ? last.roleName : '';
+        }
+      }, 200);
+    });
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(panel);
     container.appendChild(label);
-    container.appendChild(select);
+    container.appendChild(wrapper);
     return container;
   };
 
@@ -101,17 +186,6 @@
     if (formEl) formEl.prepend(container);
   };
 
-  /** 綁定 change 事件同步到 entry_role_id */
-  const bindDropdownChange = () => {
-    const select = document.getElementById(DROPDOWN_ID);
-    if (!select) return;
-
-    select.addEventListener('change', () => {
-      const rec = kintone.app.record.get();
-      rec.record[F.ENTRY_ROLE_ID].value = select.value;
-      kintone.app.record.set(rec);
-    });
-  };
 
   // --- 事件綁定 ---
 
@@ -126,18 +200,27 @@
       setTimeout(() => {
         hideCodeFields();
         mountDropdown(container);
-        bindDropdownChange();
       }, 0);
 
       return event;
     })
   );
 
-  // 詳情頁：隱藏代碼欄位
+  // 索引頁 inline edit：entry_role_id 反灰，不支援下拉 UI
+  kintone.events.on(
+    ['app.record.index.edit.show'],
+    safeHandler(async (event) => {
+      event.record[F.ENTRY_ROLE_ID].disabled = true;
+      return event;
+    })
+  );
+
+  // 詳情頁：隱藏代碼欄位 + 移除殘留的下拉 DOM（從 edit 頁轉過來時可能殘留）
   kintone.events.on(
     ['app.record.detail.show'],
     safeHandler(async (event) => {
       hideCodeFields();
+      document.getElementById(CONTAINER_ID)?.remove();
       return event;
     })
   );
