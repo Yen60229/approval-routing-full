@@ -38,5 +38,4 @@ customize-manifest.json
 
 # 本機工具 / 暫存檔（不納入版控）
 .claude/launch.json
-AGENTS.md
 preview-mockup.html
