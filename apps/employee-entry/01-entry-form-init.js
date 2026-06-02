@@ -13,6 +13,9 @@
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-06-02  Jimmy/Claude  與 role-definition 下一關下拉同步：選項依 role_name 開頭
+ *                              （unit_name 單位）分組排序；下拉識別改以 role_name 為準
+ *                              （role_id 僅作寫入用），同名角色不論存哪個 role_id 都能正確顯示
  */
 (() => {
   'use strict';
@@ -28,6 +31,8 @@
   const DROPDOWN_ID = 'ar-entry-role-dropdown';
   const CONTAINER_ID = 'ar-entry-role-container';
 
+  const UNGROUPED_LABEL = '（未分類）';
+
   /** 隱藏代碼欄位 */
   const hideCodeFields = () => {
     kintone.app.record.setFieldShown(F.ENTRY_ROLE_ID, false);
@@ -35,30 +40,51 @@
 
   /**
    * 取得所有啟用中的角色清單
-   * @returns {Promise<Array<{roleId: string, roleName: string}>>}
+   *
+   * 依 role_name 開頭（unit_name 單位）→ role_name 排序，並對「完整 role_name」去重
+   * （同名視為同一角色）。起點角色無「排除自己」的概念，故不接受 excludeRoleId。
+   *
+   * @returns {Promise<{roles: Array<{roleId: string, roleName: string, unitName: string}>, nameById: Map<string, string>}>}
+   *          roles：已依 unitName 分群、排序且去重的下拉選項；
+   *          nameById：所有啟用角色（去重前）的 role_id → role_name 對照，供初始值顯示用
    */
   const fetchActiveRoles = async () => {
     const resp = await kintoneApi('/k/v1/records', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
-      fields: [RF.ROLE_ID, RF.ROLE_NAME],
-      query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") order by ${RF.ROLE_NAME} asc limit 500`,
+      fields: [RF.ROLE_ID, RF.ROLE_NAME, RF.UNIT_NAME],
+      query:
+        `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") ` +
+        `order by ${RF.UNIT_NAME} asc, ${RF.ROLE_NAME} asc limit 500`,
     });
 
-    const seen = new Set();
-    return resp.records
-      .map((r) => ({ roleId: r[RF.ROLE_ID].value, roleName: r[RF.ROLE_NAME].value }))
-      .filter(({ roleName }) => {
-        if (seen.has(roleName)) return false;
-        seen.add(roleName);
-        return true;
+    const nameById = new Map();    // 去重前先建立完整對照，確保初始值（任一 role_id）都查得到名稱
+    const seenRoleName = new Set();
+    const roles = [];
+
+    for (const r of resp.records) {
+      const roleId = r[RF.ROLE_ID].value;
+      const roleName = r[RF.ROLE_NAME].value;
+
+      nameById.set(roleId, roleName);
+
+      if (seenRoleName.has(roleName)) continue;  // 完整 role_name 去重（同名視為同一角色）
+      seenRoleName.add(roleName);
+
+      roles.push({
+        roleId,
+        roleName,
+        unitName: r[RF.UNIT_NAME]?.value || UNGROUPED_LABEL,
       });
+    }
+
+    return { roles, nameById };
   };
 
   /**
    * 建立可搜尋下拉元件 DOM
    * 以 input + 浮動清單取代原生 select，支援打字過濾
    */
-  const buildDropdownUI = (roles, currentValue) => {
+  const buildDropdownUI = (roles, nameById, currentValue) => {
     const container = document.createElement('div');
     container.id = CONTAINER_ID;
     container.style.cssText = 'padding: 8px 0;';
@@ -81,9 +107,9 @@
       'font-size: 14px; padding: 6px 12px; min-width: 280px; ' +
       'border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;';
 
-    // 初始顯示目前選中的角色名稱
-    const currentRole = roles.find((r) => r.roleId === currentValue);
-    if (currentRole) input.value = currentRole.roleName;
+    // 初始顯示目前選中的角色名稱（以 role_name 為準，即使存的 role_id 已被去重也找得到）
+    const currentName = nameById.get(currentValue) || '';
+    if (currentName) input.value = currentName;
 
     // 浮動選項清單
     const panel = document.createElement('div');
@@ -93,9 +119,10 @@
       'border: 1px solid #ccc; border-radius: 4px; ' +
       'box-shadow: 0 4px 12px rgba(0,0,0,.12); z-index: 9999; display: none;';
 
-    let selectedRoleId = currentValue;
+    // 以 role_name 為選取識別（role_id 僅在寫入 entry_role_id 時使用）
+    let selectedName = currentName;
 
-    /** 依關鍵字重繪清單 */
+    /** 依關鍵字重繪清單（依 unitName 分組，組與組之間加單位標題） */
     const renderItems = (keyword) => {
       const filtered = keyword
         ? roles.filter((r) => r.roleName.includes(keyword))
@@ -111,22 +138,35 @@
         return;
       }
 
+      // roles 已依 unitName 排序，同單位連續，遇到單位切換就插入分組標題
+      let currentUnit = null;
+
       for (const role of filtered) {
+        if (role.unitName !== currentUnit) {
+          currentUnit = role.unitName;
+          const header = document.createElement('div');
+          header.textContent = currentUnit;
+          header.style.cssText =
+            'padding: 6px 12px; font-size: 12px; font-weight: 700; color: #555; ' +
+            'background: #f5f5f5; position: sticky; top: 0; z-index: 1;';
+          panel.appendChild(header);
+        }
+
         const item = document.createElement('div');
         item.textContent = role.roleName;
         item.style.cssText =
-          'padding: 8px 12px; font-size: 14px; cursor: pointer; ' +
-          (role.roleId === selectedRoleId ? 'background:#e0e7ff; font-weight:600;' : '');
+          'padding: 8px 12px 8px 20px; font-size: 14px; cursor: pointer; ' +
+          (role.roleName === selectedName ? 'background:#e0e7ff; font-weight:600;' : '');
 
         item.addEventListener('mouseenter', () => { item.style.background = '#f0f4ff'; });
         item.addEventListener('mouseleave', () => {
-          item.style.background = role.roleId === selectedRoleId ? '#e0e7ff' : '';
+          item.style.background = role.roleName === selectedName ? '#e0e7ff' : '';
         });
 
         // mousedown 優先於 blur，用 preventDefault 確保 blur 之前完成選取
         item.addEventListener('mousedown', (e) => {
           e.preventDefault();
-          selectedRoleId = role.roleId;
+          selectedName = role.roleName;
           input.value = role.roleName;
           panel.style.display = 'none';
 
@@ -157,8 +197,7 @@
         // 若輸入的文字不符合任何角色，還原成最後一次有效選取
         const matched = roles.find((r) => r.roleName === input.value);
         if (!matched) {
-          const last = roles.find((r) => r.roleId === selectedRoleId);
-          input.value = last ? last.roleName : '';
+          input.value = selectedName || '';
         }
       }, 200);
     });
@@ -194,8 +233,8 @@
     ['app.record.create.show', 'app.record.edit.show'],
     safeHandler(async (event) => {
       const currentValue = event.record[F.ENTRY_ROLE_ID].value || '';
-      const roles = await fetchActiveRoles();
-      const container = buildDropdownUI(roles, currentValue);
+      const { roles, nameById } = await fetchActiveRoles();
+      const container = buildDropdownUI(roles, nameById, currentValue);
 
       setTimeout(() => {
         hideCodeFields();
