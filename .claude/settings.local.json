@@ -23,7 +23,25 @@
       "Bash(git fetch *)",
       "Bash(git symbolic-ref *)",
       "Bash(git reset *)",
-      "Bash(git branch *)"
+      "Bash(git branch *)",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-search",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-get-teams",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-fetch",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-create-pages",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-create-database",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "WebFetch(domain:www.udemy.com)",
+      "WebSearch",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-update-data-source",
+      "mcp__908feecf-49e6-47a8-9bdb-87eea6273821__notion-update-page",
+      "PowerShell(Remove-Item \"D:\\\\Javascript-training\\\\approval-routing-full\\\\.claude\\\\launch.json\" -Confirm:$false)",
+      "PowerShell(\\(Get-Command rg -ErrorAction SilentlyContinue\\).Source)",
+      "Bash(node --check \"D:/Javascript-training/approval-routing-full/apps/role-definition/03-next-role-dropdown.js\")",
+      "Bash(node --check \"D:/Javascript-training/approval-routing-full/apps/employee-entry/01-entry-form-init.js\")",
+      "Bash(git commit *)",
+      "PowerShell(npx playwright --version)"
     ]
   },
   "model": "claude-sonnet-4-6"

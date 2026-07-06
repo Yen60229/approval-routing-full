@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>簽核路由引擎 — 設計與實作分享</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700;900&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     設計系統
+     紙底 + 墨色 + 單一鐵鏽橘 accent。
+     Display = 襯線(Noto Serif TC),Body = 黑體,Code = Consolas。
+     ============================================================ */
+  :root {
+    --paper:  #F5F1E8;
+    --ink:    #21242C;
+    --accent: #B5430F;
+    --muted:  #6E7077;
+    --line:   #D9D3C4;
+    --panel:  #23272F;
+    --panel-ink: #E9E5D8;
+    --serif: 'Noto Serif TC', 'PMingLiU', serif;
+    --sans:  'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+    --mono:  'Consolas', 'Courier New', monospace;
+  }
+
+  deck-stage > section { display: none; }
+  deck-stage > section.active {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    padding: 96px 130px 84px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+  }
+
+  /* ---- 共用元件 ---- */
+  .kicker {
+    font-family: var(--mono);
+    font-size: 22px;
+    letter-spacing: 0.32em;
+    color: var(--accent);
+    margin-bottom: 22px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 900;
+    font-size: 66px;
+    line-height: 1.2;
+    margin: 0 0 18px;
+  }
+  .lede {
+    font-size: 27px;
+    color: var(--muted);
+    line-height: 1.65;
+    margin: 0 0 44px;
+    max-width: 1280px;
+  }
+  .rule { height: 3px; width: 86px; background: var(--accent); margin: 0 0 40px; }
+
+  pre.code {
+    background: var(--panel);
+    color: var(--panel-ink);
+    font-family: var(--mono);
+    font-size: 22px;
+    line-height: 1.7;
+    padding: 34px 40px;
+    margin: 0;
+    overflow: hidden;
+    border-radius: 4px;
+  }
+  pre.code .c  { color: #8B919C; }              /* 註解 */
+  pre.code .k  { color: #E8A06A; }              /* 關鍵字 */
+  pre.code .s  { color: #A8C29A; }              /* 字串 */
+  pre.code .hl { color: #F0855A; font-weight: 700; }
+
+  .cols { display: flex; gap: 64px; flex: 1; min-height: 0; }
+  .col  { flex: 1; min-width: 0; }
+
+  table.tb { border-collapse: collapse; width: 100%; font-size: 24px; }
+  table.tb th {
+    text-align: left; font-family: var(--mono); font-size: 19px;
+    letter-spacing: 0.12em; color: var(--muted);
+    border-bottom: 2px solid var(--ink); padding: 0 18px 12px 0;
+  }
+  table.tb td { border-bottom: 1px solid var(--line); padding: 15px 18px 15px 0; vertical-align: top; line-height: 1.5; }
+  table.tb td.t  { font-weight: 700; white-space: nowrap; }
+  table.tb td .en { font-family: var(--mono); font-size: 20px; color: var(--accent); }
+
+  .foot {
+    margin-top: auto; padding-top: 28px;
+    font-family: var(--mono); font-size: 17px; letter-spacing: 0.18em;
+    color: var(--muted); display: flex; justify-content: space-between;
+  }
+
+  /* ---- 節點圖(鏈結串列) ---- */
+  .chain { display: flex; align-items: center; gap: 0; }
+  .node {
+    border: 2.5px solid var(--ink); background: #FFFDF6;
+    padding: 16px 26px; text-align: center; border-radius: 4px;
+    box-shadow: 4px 4px 0 rgba(33,36,44,0.12);
+  }
+  .node .nm { font-family: var(--serif); font-weight: 700; font-size: 26px; }
+  .node .id { font-family: var(--mono); font-size: 16px; color: var(--muted); margin-top: 4px; }
+  .node.new { border-color: var(--accent); }
+  .node.new .nm { color: var(--accent); }
+  .arrow {
+    font-family: var(--mono); color: var(--accent);
+    font-size: 26px; padding: 0 14px; white-space: nowrap;
+  }
+
+  .tag {
+    display: inline-block; font-family: var(--mono); font-size: 18px;
+    border: 1.5px solid var(--accent); color: var(--accent);
+    padding: 3px 14px; border-radius: 999px; margin-right: 10px;
+  }
+
+  /* ---- 大數字統計 ---- */
+  .stat .num { font-family: var(--serif); font-weight: 900; font-size: 84px; line-height: 1; color: var(--accent); }
+  .stat .lab { font-size: 22px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+
+  /* ---- 架構層 ---- */
+  .layer {
+    border: 2px solid var(--ink); background: #FFFDF6; border-radius: 4px;
+    padding: 20px 34px; display: flex; align-items: baseline; gap: 28px;
+  }
+  .layer .lt { font-family: var(--serif); font-weight: 700; font-size: 28px; white-space: nowrap; }
+  .layer .ld { font-size: 22px; color: var(--muted); line-height: 1.5; }
+  .layer.hot { border-color: var(--accent); }
+  .layer.hot .lt { color: var(--accent); }
+  .down { text-align: center; color: var(--accent); font-size: 26px; line-height: 1; margin: 8px 0; font-family: var(--mono); }
+
+  ul.pts { list-style: none; padding: 0; margin: 0; font-size: 25px; line-height: 1.6; }
+  ul.pts li { padding: 14px 0 14px 36px; position: relative; border-bottom: 1px solid var(--line); }
+  ul.pts li::before { content: ''; position: absolute; left: 4px; top: 26px; width: 12px; height: 12px; background: var(--accent); }
+  ul.pts b { font-weight: 700; }
+  ul.pts .en { font-family: var(--mono); font-size: 21px; color: var(--accent); }
+
+  .h2 {
+    font-family: var(--serif); font-weight: 700; font-size: 30px;
+    margin: 0 0 20px; padding-bottom: 12px; border-bottom: 2px solid var(--ink);
+  }
+</style>
+</head>
+<body>
+<deck-stage>
+
+  <!-- ════════ 01 封面 ════════ -->
+  <section style="justify-content: center;">
+    <div class="kicker">APPROVAL ROUTING ENGINE · DESIGN &amp; IMPLEMENTATION</div>
+    <h1 style="font-size: 100px; max-width: 1500px;">簽核路由引擎<br>設計與實作分享</h1>
+    <div class="rule" style="margin-top: 26px;"></div>
+    <p class="lede" style="font-size: 31px; max-width: 1320px;">
+      我用「鏈結串列 × 關聯式資料」的概念,在 kintone 上實作了簽核流程。<br>
+      想跟您分享我是怎麼設計的、過程中遇到什麼問題、學到了什麼。
+    </p>
+    <div class="foot">
+      <span>JIMMY · 2026-06</span>
+      <span>kintone App 685 / 686 · ES2020+</span>
+    </div>
+  </section>
+
+  <!-- ════════ 02 問題 ════════ -->
+  <section>
+    <div class="kicker">01 · THE PROBLEM</div>
+    <h1>我接手的舊系統,把組織圖寫死在程式裡</h1>
+    <p class="lede">舊系統用「組織名稱 + 職稱」推算簽核者。我維護一陣子之後,整理出幾個一直重複發生的問題。</p>
+    <div class="cols">
+      <div class="col" style="flex: 1.15;">
+<pre class="code">
+<span class="c">// 舊系統真實樣貌</span>
+<span class="k">switch</span> (title) {
+  <span class="k">case</span> <span class="s">'課長'</span>:  <span class="c">// 查次長 → 查部長 → 硬編碼對應</span>
+  <span class="k">case</span> <span class="s">'次長'</span>:
+  <span class="k">case</span> <span class="s">'部長'</span>: ...
+}
+<span class="hl">processOrgName()</span>        <span class="c">// 字串處理組織名稱</span>
+<span class="hl">SPECIAL_DEPARTMENTS</span>     <span class="c">// 特例硬編碼陣列</span>
+<span class="hl">DIRECTOR_CHECK_DEPTS</span>    <span class="c">// 又一個特例陣列</span>
+</pre>
+      </div>
+      <div class="col">
+        <ul class="pts">
+          <li><b>組織改名</b> → 字串比對失效,改程式</li>
+          <li><b>職稱層級調整</b> → 改 <span class="en">case</span>,改程式</li>
+          <li><b>兩關之間插一個新部門</b> → 推導邏輯整個崩潰</li>
+          <li><b>HR 無法自行維護</b>,每件事都得開單給 IT 改程式</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot"><span>痛點起源 · docs/對話脈絡.md</span><span>02</span></div>
+  </section>
+
+  <!-- ════════ 03 關鍵洞察 ════════ -->
+  <section>
+    <div class="kicker">02 · THE INSIGHT</div>
+    <h1>我的設計改了三版才定下來</h1>
+    <p class="lede" style="margin-bottom: 34px;">
+      第二版用的手法,後來查資料才知道有個名字:間接層(indirection)——不直接指向目標,而是指向一個中間層。
+    </p>
+    <div class="cols" style="gap: 48px;">
+      <div class="col">
+        <div class="h2">階段 1 · 純鏈結串列</div>
+        <p style="font-size: 23px; line-height: 1.65; color: var(--muted);">
+          我一開始讓每個員工直接填「下一關給<b style="color:var(--ink);">誰</b>」。
+          但馬上發現:課長換人,底下 20 個員工要改 20 筆——同一份資訊散在 20 個地方,這樣不對。
+        </p>
+      </div>
+      <div class="col">
+        <div class="h2" style="border-color: var(--accent); color: var(--accent);">階段 2 · 角色抽象層</div>
+        <p style="font-size: 23px; line-height: 1.65; color: var(--muted);">
+          我在中間加了一層「<b style="color:var(--ink);">角色</b>」:員工指向角色,角色表才記「現在是誰」。
+          換人只改 1 筆,<b style="color:var(--accent);">O(N) → O(1)</b>,20 個員工自動跟著變。
+        </p>
+      </div>
+      <div class="col">
+        <div class="h2">階段 3 · 混合架構</div>
+        <p style="font-size: 23px; line-height: 1.65; color: var(--muted);">
+          為了讓跑到一半的舊單也能換人,我把重要角色改綁 kintone 群組
+          (<span style="font-family:var(--mono); font-size:20px;">GROUP_SELECT</span>),次要角色維持指定個人。
+          單子裡只存角色 ID,跑到該關才解析成真人。
+        </p>
+      </div>
+    </div>
+    <div style="display:flex; gap: 120px; margin-top: 10px;">
+      <div class="stat"><div class="num">O(1)</div><div class="lab">換人成本:改角色表 1 筆</div></div>
+      <div class="stat"><div class="num">1–2 筆</div><div class="lab">插入新關卡要動的資料量</div></div>
+      <div class="stat"><div class="num">0 行</div><div class="lab">組織異動需要改的程式碼</div></div>
+    </div>
+    <div class="foot"><span>設計演進三階段</span><span>03</span></div>
+  </section>
+
+  <!-- ════════ 04 資料結構 ════════ -->
+  <section>
+    <div class="kicker">03 · DATA STRUCTURE</div>
+    <h1>我把鏈結串列做在資料表上</h1>
+    <p class="lede">
+      這是我覺得專案裡最有趣的部分:沒有真的指標,<b style="color:var(--ink);">每筆角色記錄當節點,<span style="font-family:var(--mono); font-size:24px;">next_role_id</span> 欄位當 next 指標</b>;
+      kintone App 就是關聯式資料表,群組則是「角色 → 多名簽核者」的一對多關聯。
+    </p>
+    <div style="margin-bottom: 40px;">
+      <div style="font-family:var(--mono); font-size:19px; letter-spacing:0.15em; color:var(--muted); margin-bottom:18px;">ROLE_DEFINITION(~80 筆) · 在 A 與 B 之間插入新關卡 P:</div>
+      <div class="chain">
+        <div class="node"><div class="nm">業務課長</div><div class="id">ROLE_0001</div></div>
+        <div class="arrow">─next─▶</div>
+        <div class="node new"><div class="nm">營運審查 P</div><div class="id">ROLE_0081(新增)</div></div>
+        <div class="arrow">─next─▶</div>
+        <div class="node"><div class="nm">業務部長</div><div class="id">ROLE_0002</div></div>
+        <div class="arrow">─next─▶</div>
+        <div class="node"><div class="nm">總經理</div><div class="id">ROLE_0003 · 終點</div></div>
+      </div>
+      <p style="font-size: 22px; color: var(--muted); margin-top: 18px;">
+        我只要動兩筆:新增 P、把 ROLE_0001 的 next 改指向 P。其餘 78 筆角色、500 名員工、所有程式碼,完全不用動。
+      </p>
+    </div>
+    <div class="cols" style="flex: 0 0 auto; gap: 48px;">
+      <div class="col">
+        <table class="tb">
+          <tr><th>表(APP)</th><th>關聯角色</th></tr>
+          <tr><td class="t">role_definition <span class="en">685</span></td><td>節點集合:role_id(主鍵)、next_role_id(指標)、holder(值)、is_chain_end(尾節點)</td></tr>
+          <tr><td class="t">employee_entry <span class="en">686</span></td><td>外鍵表:employee → entry_role_id,即「每個人從鏈的哪個節點進入」</td></tr>
+          <tr><td class="t">kintone 群組</td><td>一對多關聯:角色 → 多名成員,IT 後台維護</td></tr>
+        </table>
+      </div>
+      <div class="col" style="flex: 0.8;">
+        <ul class="pts">
+          <li><b>同一條鏈可多源頭匯流</b>——多個角色 next 指向同一節點,實為 DAG 上的路徑</li>
+          <li><b>role_name 為業務識別、role_id 僅內部指標</b>,同名角色視為同一關去重</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot"><span>Linked List × Relational Model</span><span>04</span></div>
+  </section>
+
+  <!-- ════════ 05 系統架構 ════════ -->
+  <section>
+    <div class="kicker">04 · ARCHITECTURE</div>
+    <h1>我把系統切成四層</h1>
+    <p class="lede" style="margin-bottom: 30px;">另一個我覺得關鍵的設計:送單時只存角色 ID,流程跑到第 N 關才解析成真人——這就是舊單能自動換人的原因。</p>
+    <div class="cols" style="gap: 56px;">
+      <div class="col" style="flex: 1.1; display:flex; flex-direction:column;">
+        <div class="layer"><span class="lt">維護層</span><span class="ld">IT 管 kintone 群組成員 · HR 管角色表 + 起點表(權限嚴格分工)</span></div>
+        <div class="down">▼</div>
+        <div class="layer"><span class="lt">資料層</span><span class="ld">role_definition(80)+ employee_entry(500)+ 共用子表格 approver_chain</span></div>
+        <div class="down">▼</div>
+        <div class="layer hot"><span class="lt">引擎層</span><span class="ld">window.ApprovalRouting — buildChain / validateChain / simulateChain / reverseQuery</span></div>
+        <div class="down">▼</div>
+        <div class="layer"><span class="lt">應用層</span><span class="ld">採購、請假、出差……各申請 App,接入只需 4 行程式碼</span></div>
+      </div>
+      <div class="col" style="flex: 0.9;">
+        <table class="tb">
+          <tr><th>時間點</th><th>動作</th></tr>
+          <tr><td class="t">申請人按儲存</td><td>沿鏈走完,把每關「角色 ID」寫進子表格</td></tr>
+          <tr><td class="t">跑到第 N 關</td><td>即時查角色當下 holder(群組/個人)→ <b>跑到時才知道是誰</b></td></tr>
+          <tr><td class="t">中途群組換人</td><td>IT 改群組 → 進行中的舊單下一關自動用新人</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="foot"><span>三層維護分工 + Lazy Resolution</span><span>05</span></div>
+  </section>
+
+  <!-- ════════ 06 演算法 ════════ -->
+  <section>
+    <div class="kicker">05 · ALGORITHM</div>
+    <h1>核心函式 buildChain():走鏈、防環、平行化</h1>
+    <p class="lede" style="margin-bottom: 30px;">我把它拆成三個階段,讓「走結構」和「查資料」分開;查詢改成平行之後,5 關鏈估算從 1500ms 降到 300ms。</p>
+    <div class="cols">
+      <div class="col" style="flex: 1.15;">
+<pre class="code">
+<span class="c">// Phase 1 走結構:純快取遍歷,O(n) 零 API</span>
+<span class="k">const</span> visited = <span class="k">new</span> <span class="hl">Set</span>();          <span class="c">// 循環偵測 O(1)</span>
+<span class="k">for</span> (<span class="k">let</span> step = 1; step &lt;= <span class="hl">MAX_DEPTH</span>; step++) {
+  <span class="k">if</span> (visited.has(id)) <span class="k">return</span> <span class="s">'偵測到循環'</span>;
+  visited.add(id);
+  id = role[NEXT_ROLE_ID].value;   <span class="c">// 跟著指標走</span>
+}
+
+<span class="c">// Phase 2 平行解析:N 關 holder 同時發出</span>
+<span class="k">await</span> <span class="hl">Promise.all</span>(roles.map(resolveHolders));
+
+<span class="c">// Phase 3 組裝:純函式,零 I/O</span>
+roles.map((r, i) =&gt; assembleChainStep(r, holders[i], i+1));
+</pre>
+      </div>
+      <div class="col">
+        <ul class="pts">
+          <li><b>防止繞圈</b>:我用 <span class="en">Set</span> 記錄走過的角色,同一個角色出現第二次就停下報錯</li>
+          <li><b>MAX_DEPTH = 20</b>:我多設一道上限當保險,就算資料設錯也不會無限迴圈</li>
+          <li><b>序列改平行</b>:原本一關查完再查下一關,後來發現各關查詢互不依賴,改用 <span class="en">Promise.all</span> 同時發出</li>
+          <li><b>組裝寫成純函式</b>:不碰 API,可以直接用 Vitest 在本機測</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot"><span>core/03-chain-builder.js</span><span>06</span></div>
+  </section>
+
+  <!-- ════════ 07 快取工程 ════════ -->
+  <section>
+    <div class="kicker">06 · CACHING &amp; CONCURRENCY</div>
+    <h1>快取:這兩個問題我是踩到才學會的</h1>
+    <p class="lede" style="margin-bottom: 30px;">一個是快取放久了資料會過期,一個是多個請求同時進來會重複載入——兩個都在開發過程中實際遇到、處理掉了。</p>
+    <div class="cols">
+      <div class="col" style="flex: 1.15;">
+<pre class="code">
+<span class="c">// 三道防線(core/02-api-client.js)</span>
+<span class="k">const</span> loadAllRoles = () =&gt; {
+  <span class="k">if</span> (<span class="hl">isCacheFresh</span>())  <span class="k">return</span> Promise.resolve();
+  <span class="c">// ① TTL 5 分鐘內 → 零 API 呼叫</span>
+  <span class="k">if</span> (<span class="hl">roleLoadPromise</span>) <span class="k">return</span> roleLoadPromise;
+  <span class="c">// ② 進行中的 fetch 直接複用 → 防並發重複載入</span>
+  roleLoadPromise = (<span class="k">async</span> () =&gt; {
+    <span class="c">// ③ 真正 fetch:offset 分頁取全量,寫入 Map</span>
+    ... <span class="k">finally</span> { roleLoadPromise = <span class="k">null</span>; }
+  })();                <span class="c">// 失敗也能重試</span>
+};
+</pre>
+      </div>
+      <div class="col">
+        <ul class="pts">
+          <li><b>分開處理</b>:角色只有 80 筆,我一次全抓進 <span class="en">Map</span>;員工 500 筆改成用到才查</li>
+          <li><b>TTL 5 分鐘</b>:HR 隨時可能改資料,所以快取設了保鮮期;送單前用 <span class="en">forceFresh</span> 強制拿最新</li>
+          <li><b>Promise Singleton</b>:把「載入中的 Promise」存起來讓大家共用,同時多個呼叫實際只打 1 次 API</li>
+          <li><b>offset 分頁</b>:實測踩到 kintone 單次 500 筆上限被截斷,改成一頁一頁抓到完</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot"><span>core/02-api-client.js</span><span>07</span></div>
+  </section>
+
+  <!-- ════════ 08 前端工程技藝 ════════ -->
+  <section>
+    <div class="kicker">07 · FRONTEND CRAFT</div>
+    <h1>沒有框架的環境,我這樣寫前端</h1>
+    <p class="lede" style="margin-bottom: 30px;">kintone 客製不能用框架和打包器,全部是原生 JavaScript。這些是我每支檔案固定遵守的寫法。</p>
+    <div class="cols" style="gap: 56px;">
+      <div class="col">
+        <table class="tb">
+          <tr><th>技藝</th><th>用途</th></tr>
+          <tr><td class="t">IIFE + <span class="en">'use strict'</span></td><td>每支檔案包一層,避免變數在共用的全域環境互相打架</td></tr>
+          <tr><td class="t"><span class="en">Object.freeze(CONFIG)</span></td><td>App ID、欄位代碼集中一處,凍結起來防止被改到</td></tr>
+          <tr><td class="t"><span class="en">safeHandler()</span></td><td>我寫的包裝函式:統一 try/catch + SweetAlert2 提示,事件不會無聲掛掉</td></tr>
+          <tr><td class="t">事件驅動</td><td>kintone <span class="en">events.on</span> + async/await,做 submit 驗證、欄位條件顯示</td></tr>
+          <tr><td class="t"><span class="en">window.ApprovalRouting</span></td><td>共用功能統一掛在一個名稱下,跨檔案互相呼叫</td></tr>
+        </table>
+      </div>
+      <div class="col">
+        <table class="tb">
+          <tr><th>UI 工程</th><th>細節</th></tr>
+          <tr><td class="t">可搜尋下拉元件</td><td>原生 input + 浮動清單,80+ 角色依 unit_name 分組、role_name 去重</td></tr>
+          <tr><td class="t">Timeline 鏈預覽</td><td>DOM 注入視覺化卡片、多源頭樹狀匯流、loading spinner、tooltip 掛 body 防裁切</td></tr>
+          <tr><td class="t"><span class="en">TreeWalker</span></td><td>之前直接改 HTML 弄壞了欄寬拖曳,後來改用它只動文字節點</td></tr>
+          <tr><td class="t">使用者 35–55 歲</td><td>大按鈕、全中文、技術欄位對 HR 隱藏、SweetAlert2 提示</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="foot"><span>core/04-utils.js · apps/role-definition/01–07</span><span>08</span></div>
+  </section>
+
+  <!-- ════════ 09 工具鏈 ════════ -->
+  <section>
+    <div class="kicker">08 · TOOLING &amp; QUALITY</div>
+    <h1>資料會設錯,所以我做了檢查工具</h1>
+    <p class="lede" style="margin-bottom: 30px;">規則搬進資料表之後,我發現風險也跟著搬家:程式邏輯變單純了,但資料是人工維護的,總有設錯的一天。</p>
+    <div class="cols" style="gap: 56px;">
+      <div class="col">
+        <table class="tb">
+          <tr><th>工具</th><th>守護什麼</th></tr>
+          <tr><td class="t">健康檢查 <span class="en">tools/01</span></td><td>掃全表找循環、斷鏈、孤立角色、空 holder——圖的完整性檢查</td></tr>
+          <tr><td class="t">模擬器 <span class="en">tools/02</span></td><td>任選員工 dry-run 整條簽核鏈,上線前先看結果</td></tr>
+          <tr><td class="t">反向查詢 <span class="en">tools/03</span></td><td>「誰送的單會簽到我?」——展開群組反向走鏈</td></tr>
+          <tr><td class="t">批量工具 <span class="en">tools/04 + CSV</span></td><td>批量建角色 / CSV 匯入員工,dry-run 預覽再寫入</td></tr>
+        </table>
+      </div>
+      <div class="col">
+        <ul class="pts">
+          <li><b>Vitest 單元測試</b>:核心走鏈邏輯我有寫測試,搭配假資料在本機就能驗,不用每次上 kintone 試</li>
+          <li><b>Git 版控 + 文件</b>:規格、欄位對照、進度追蹤,每個決策「為什麼這樣選」我都有記下來</li>
+          <li><b>分階段上線</b>:建表 → HR 介面(驗收中)→ 試點 App 跑兩週 → 確認穩定才全面切換</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot"><span>tools/ · tests/ · docs/</span><span>09</span></div>
+  </section>
+
+  <!-- ════════ 10 CS 概念對照 ════════ -->
+  <section>
+    <div class="kicker">09 · CS CONCEPTS</div>
+    <h1>做完回頭看,我用到了這些概念</h1>
+    <p class="lede" style="margin-bottom: 30px;">以前這些是為了考試學的,這次是被真實需求逼著用出來的——「課長換人要改 20 筆」這個抱怨,逼出了間接層。</p>
+    <div class="cols" style="gap: 56px;">
+      <div class="col">
+        <table class="tb">
+          <tr><th>概念</th><th>落地位置</th></tr>
+          <tr><td class="t">Linked List <span class="en">鏈結串列</span></td><td>next_role_id 指標,插入節點 O(1)</td></tr>
+          <tr><td class="t">Indirection <span class="en">間接層</span></td><td>角色抽象層,換人 O(N)→O(1)</td></tr>
+          <tr><td class="t">Hash Map / Set</td><td>roleCache O(1) 查找、visited 防環</td></tr>
+          <tr><td class="t">Graph <span class="en">圖論</span></td><td>多源頭匯流 = DAG,健康檢查 = 找環</td></tr>
+          <tr><td class="t">Cache Invalidation</td><td>TTL + forceFresh + 失敗重試</td></tr>
+        </table>
+      </div>
+      <div class="col">
+        <table class="tb">
+          <tr><th>概念</th><th>落地位置</th></tr>
+          <tr><td class="t">Concurrency <span class="en">並發控制</span></td><td>Promise singleton 防 race、Promise.all 平行 I/O</td></tr>
+          <tr><td class="t">Lazy Evaluation</td><td>子表格存角色,跑到該關才解析真人</td></tr>
+          <tr><td class="t">Strategy Pattern</td><td>holder_type 分流 GROUP / USER,取代 if-else</td></tr>
+          <tr><td class="t">Pure Function</td><td>assembleChainStep 零 I/O,可單測</td></tr>
+          <tr><td class="t">Normalization <span class="en">正規化</span></td><td>兩表拆分消除資料重複,符合 DRY</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="foot"><span>概念對照</span><span>10</span></div>
+  </section>
+
+  <!-- ════════ 11 總評 ════════ -->
+  <section>
+    <div class="kicker">10 · SUMMARY &amp; ROADMAP</div>
+    <h1>我學到最多的,是資料設計</h1>
+    <p class="lede" style="margin-bottom: 36px;">
+      把變動最頻繁的東西(組織)從程式碼搬進資料表,程式只負責不變的邏輯(走鏈)。
+      方向定對之後,我發現後面的程式其實都不難——難的是前面想清楚。
+    </p>
+    <div class="cols" style="gap: 56px;">
+      <div class="col">
+        <div class="h2" style="border-color: var(--accent); color: var(--accent);">我覺得做對的地方</div>
+        <ul class="pts">
+          <li>中間層選在「角色」這個剛好的位置,而不是人或部門</li>
+          <li>有注意效能:快取、平行查詢、避免重複 API 呼叫</li>
+          <li>把 HR 當成真正的使用者設計介面,維護工作交得出去</li>
+        </ul>
+      </div>
+      <div class="col">
+        <div class="h2">接下來</div>
+        <ul class="pts">
+          <li><b>P1 收尾</b>:App 685 七支 JS 逐項驗收簽收</li>
+          <li><b>P2</b>:員工起點表上傳實測;<b>P4–P7</b> 引擎與工具上線</li>
+          <li><b>P8</b>:試點 App 接入 process.proceed,試跑兩週再全面切換</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot">
+      <span>APPROVAL ROUTING ENGINE · JIMMY</span>
+      <span>←/→ 翻頁 · Ctrl+P 匯出 PDF</span>
+    </div>
+  </section>
+
+</deck-stage>
+
+<script>
+/**
+ * <deck-stage> — HTML幻燈片外殼 web component(huashu-design starter)
+ * auto-scale + 鍵盤導航 + counter + localStorage + 列印支援
+ */
+(function() {
+  const STORAGE_KEY_PREFIX = 'deck-stage-slide-';
+
+  class DeckStage extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' });
+      this._currentSlide = 0;
+      this._slides = [];
+      this._storageKey = STORAGE_KEY_PREFIX + (location.pathname || 'default');
+    }
+
+    connectedCallback() {
+      this._width = parseInt(this.getAttribute('width')) || 1920;
+      this._height = parseInt(this.getAttribute('height')) || 1080;
+      this._render();
+      const init = () => {
+        this._collectSlides();
+        this._setupEventListeners();
+        this._restoreSlide();
+        this._updateDisplay();
+        this._setupPrintStyles();
+      };
+      if (this.ownerDocument.readyState === 'loading') {
+        this.ownerDocument.addEventListener('DOMContentLoaded', init, { once: true });
+      } else {
+        requestAnimationFrame(init);
+      }
+    }
+
+    _render() {
+      this.shadowRoot.innerHTML = `
+        <style>
+          :host { display: block; position: fixed; inset: 0; background: #16181D; overflow: hidden; }
+          .stage { position: absolute; top: 50%; left: 50%; transform-origin: top left; will-change: transform; background: #F5F1E8; }
+          .slide-wrapper { width: 100%; height: 100%; position: relative; }
+          ::slotted(section) { display: none; width: 100%; height: 100%; position: absolute; top: 0; left: 0; overflow: hidden; }
+          .counter { position: fixed; bottom: 20px; right: 20px; background: rgba(0,0,0,0.6); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-variant-numeric: tabular-nums; z-index: 100; user-select: none; opacity: 0.6; transition: opacity 0.2s; font-family: Consolas, monospace; }
+          .counter:hover { opacity: 1; }
+          .nav-zone { position: fixed; top: 0; bottom: 0; width: 12%; cursor: pointer; z-index: 50; }
+          .nav-zone.left { left: 0; } .nav-zone.right { right: 0; }
+          .nav-hint { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 999px; background: rgba(0,0,0,0.15); color: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; font-size: 24px; opacity: 0; transition: opacity 0.2s; }
+          .nav-zone.left .nav-hint { left: 20px; } .nav-zone.right .nav-hint { right: 20px; }
+          .nav-zone:hover .nav-hint { opacity: 1; }
+          @media print {
+            :host { position: static; background: #fff; }
+            .counter, .nav-zone { display: none !important; }
+            .stage { position: static; transform: none !important; }
+          }
+        </style>
+        <div class="stage" id="stage" style="width: ${this._width}px; height: ${this._height}px;">
+          <div class="slide-wrapper"><slot></slot></div>
+        </div>
+        <div class="nav-zone left" id="navLeft"><div class="nav-hint">‹</div></div>
+        <div class="nav-zone right" id="navRight"><div class="nav-hint">›</div></div>
+        <div class="counter" id="counter">1 / 1</div>
+      `;
+    }
+
+    _collectSlides() {
+      this._slides = Array.from(this.querySelectorAll(':scope > section'));
+    }
+
+    _setupEventListeners() {
+      window.addEventListener('resize', () => this._updateScale());
+      document.addEventListener('keydown', (e) => {
+        if (e.target.matches('input, textarea, [contenteditable]')) return;
+        switch (e.key) {
+          case 'ArrowRight': case ' ': case 'PageDown':
+            e.preventDefault(); this.next(); break;
+          case 'ArrowLeft': case 'PageUp':
+            e.preventDefault(); this.prev(); break;
+          case 'Home': e.preventDefault(); this.goTo(0); break;
+          case 'End': e.preventDefault(); this.goTo(this._slides.length - 1); break;
+        }
+      });
+      this.shadowRoot.getElementById('navLeft').addEventListener('click', () => this.prev());
+      this.shadowRoot.getElementById('navRight').addEventListener('click', () => this.next());
+      window.addEventListener('hashchange', () => this._handleHash());
+      if (location.hash) setTimeout(() => this._handleHash(), 0);
+    }
+
+    _handleHash() {
+      const m = location.hash.match(/^#slide-(\d+)$/);
+      if (m) {
+        const idx = parseInt(m[1]) - 1;
+        if (idx >= 0 && idx < this._slides.length) this.goTo(idx);
+      }
+    }
+
+    _restoreSlide() {
+      try {
+        const stored = localStorage.getItem(this._storageKey);
+        if (stored !== null) {
+          const idx = parseInt(stored);
+          if (idx >= 0 && idx < this._slides.length) this._currentSlide = idx;
+        }
+      } catch (e) {}
+    }
+
+    _saveSlide() {
+      try { localStorage.setItem(this._storageKey, String(this._currentSlide)); } catch (e) {}
+    }
+
+    _updateScale() {
+      const stage = this.shadowRoot.getElementById('stage');
+      if (!stage) return;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      const scale = Math.min(vw / this._width, vh / this._height);
+      const ox = (vw - this._width * scale) / 2;
+      const oy = (vh - this._height * scale) / 2;
+      stage.style.transform = `translate(${ox}px, ${oy}px) scale(${scale})`;
+      stage.style.top = '0';
+      stage.style.left = '0';
+    }
+
+    _updateDisplay() {
+      this._slides.forEach((s, i) => s.classList.toggle('active', i === this._currentSlide));
+      const counter = this.shadowRoot.getElementById('counter');
+      if (counter) counter.textContent = `${this._currentSlide + 1} / ${this._slides.length}`;
+      this._updateScale();
+    }
+
+    _setupPrintStyles() {
+      const st = document.createElement('style');
+      st.textContent = `
+        @media print {
+          @page { size: ${this._width}px ${this._height}px; margin: 0; }
+          body { margin: 0; padding: 0; }
+          deck-stage { position: static !important; }
+          deck-stage > section {
+            display: flex !important; position: relative !important;
+            width: ${this._width}px !important; height: ${this._height}px !important;
+            page-break-after: always; overflow: hidden;
+          }
+          deck-stage > section:last-child { page-break-after: auto; }
+        }
+      `;
+      document.head.appendChild(st);
+    }
+
+    next() { if (this._currentSlide < this._slides.length - 1) { this._currentSlide++; this._saveSlide(); this._updateDisplay(); } }
+    prev() { if (this._currentSlide > 0) { this._currentSlide--; this._saveSlide(); this._updateDisplay(); } }
+    goTo(i) { if (i >= 0 && i < this._slides.length) { this._currentSlide = i; this._saveSlide(); this._updateDisplay(); } }
+  }
+
+  customElements.define('deck-stage', DeckStage);
+})();
+</script>
+</body>
+</html>
