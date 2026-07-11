@@ -84,21 +84,23 @@
   - [x] 逐卡儲存 + UI 全面提升（35-55 歲使用者優化）、holder 改姓名/帳號雙行
   - [x] 驗證/API 失敗時略過並於結束彙整清單；修正 CB_IL02、saveCard API URL 等
 - [x] **上傳全部 7 支 JS 至 App 685** ✅ 已上傳，功能於 kintone 真實資料運作中
-  - 下列為正式驗收項，目前邊測邊修，待 Jimmy 逐項最終簽收：
-  - [ ] 新增頁：role_id 自動產生、兩欄位隱藏、分區標題顯示
-  - [ ] 新增頁：holder_type 切換 → group/user 欄位條件顯示
-  - [ ] 新增頁：next_role_id 下拉 UI 顯示、切換後 Timeline 即時更新
-  - [ ] 編輯頁：所有上述功能 + 「更新預覽 spinner」動畫
-  - [ ] 詳情頁：自訂卡片 + 群組成員列表 + chain_preview Timeline
-  - [ ] 索引頁：「簽核者」欄統一顯示群組/個人
-  - [ ] 儲存驗證：holder 必填、next_role_id 必填（或勾 is_chain_end）
+- [x] **正式逐項驗收** ✅ 2026-07-12 全數通過並簽收（清單移至 `docs/P1驗收清單.md`）
 
 ### ✅ P2 — 起點表 HR 介面 + 批量匯入（程式碼已完成，待上傳測試）
 - [x] `apps/employee-entry/01-entry-form-init.js` — 起點角色下拉選單 ✅ 2026-04-14
   - [x] 升級為可搜尋下拉元件 ✅ 2026-05-10
   - [x] 與 role-definition 同步：unit_name 分組排序、完整 role_name 去重、識別改以 role_name 為準 ✅ 2026-06-02
 - [x] `apps/employee-entry/02-batch-import.js` — CSV 匯入 + dry-run ✅ 2026-04-14
-- [ ] 上傳至 kintone 員工起點對照表 App 並測試
+  - [x] CSV 第二欄改用角色名稱（HR 看得懂）；dry-run 加驗員工帳號存在、
+        已有起點者跳過（中斷後重傳同一份 CSV 安全）✅ 2026-07-12
+- [x] `tools/05-coverage-check.js` — 涵蓋率檢查工具（P2 衍生，Jimmy 需求）✅ 2026-07-12
+  - 685/686 清單頁「未設定名單」按鈕：找出「使用中」但未納入簽核系統的使用者
+  - A 區「未設定起點」：顯示單位、可依單位篩選勾選 → 選起點角色一鍵批量建立 686 記錄
+  - B 區「不具簽核身分」：勾人 → 選「指定個人」角色 → 附加寫入 holder_user
+    （同名角色一併更新維持一致；群組型角色成員仍由 IT 維護）
+  - 兩區均可匯出 CSV（含 BOM，Excel 直開不亂碼）
+- [ ] 上傳至 kintone 員工起點對照表 App 並測試（core 3 支 + employee-entry 2 支 + tools/05）
+- [ ] tools/05 一併上傳至 App 685（涵蓋率按鈕兩表都能開）
 - [ ] `docs/01-HR維護操作手冊.md` 快速上手版（自 P10 提前，理由見 docs/05 評估報告 #11）
 
 ### ✅ P3 — 鏈視覺化 + 即時預覽（已整合入 P1，無需另行處理）
