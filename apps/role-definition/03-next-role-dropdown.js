@@ -18,12 +18,14 @@
  *                              並對完整 role_name 去重，方便 HR 在大量角色中定位。
  *                              下拉識別一律以 role_name 為準（role_id 僅作寫入用），
  *                              同名角色不論存哪個 role_id，開啟記錄都能正確顯示。
+ *   2026-07-12  Jimmy/Claude  submit 驗證改為累積錯誤（pushSubmitError），彈窗交由
+ *                              最後執行的 07 統一彙整
  */
 (() => {
   'use strict';
 
   const { APP_ID, ROLE_FIELDS: F, CHECKBOX } = window.ApprovalRouting.Config;
-  const { safeHandler, kintoneApi } = window.ApprovalRouting.Utils;
+  const { safeHandler, kintoneApi, pushSubmitError } = window.ApprovalRouting.Utils;
 
   const DROPDOWN_ID = 'ar-next-role-dropdown';
   const CONTAINER_ID = 'ar-next-role-container';
@@ -300,7 +302,9 @@
     }
   );
 
-  // 儲存前驗證：非終點角色必須選擇下一關
+  // 儲存前驗證：非終點角色必須選擇下一關。
+  // 只累積錯誤，不在此彈窗——由最後執行的驗證 handler（07-role-name-selector.js，
+  // 依上傳順序最後載入）統一彙整顯示一次 SweetAlert。
   kintone.events.on(
     [
       'app.record.create.submit',
@@ -310,13 +314,7 @@
       const rec = event.record;
 
       if (!isChainEnd(rec) && !rec[F.NEXT_ROLE_ID].value) {
-        event.error = '請選擇下一關角色，或勾選「是終點」';
-        await Swal.fire({
-          icon: 'warning',
-          title: '缺少下一關',
-          text: '非終點角色必須指定下一關角色，或勾選「是終點」。',
-          confirmButtonText: '確定',
-        });
+        pushSubmitError(event, '非終點角色必須指定下一關角色，或勾選「是終點」。');
       }
 
       return event;

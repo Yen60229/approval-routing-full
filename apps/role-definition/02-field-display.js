@@ -13,13 +13,15 @@
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
  *   2026-04-18  Jimmy/Claude  新增 detail.show 條件顯示；index.show 統一簽核者欄
+ *   2026-07-12  Jimmy/Claude  submit 驗證改為累積錯誤（pushSubmitError），彈窗交由
+ *                             最後執行的 07 統一彙整；index.edit.submit 自行彙整
  */
 (() => {
   'use strict';
 
   const { ROLE_FIELDS: F, HOLDER_TYPE_OPTIONS: HT } =
     window.ApprovalRouting.Config;
-  const { safeHandler } = window.ApprovalRouting.Utils;
+  const { safeHandler, pushSubmitError, flushSubmitErrors } = window.ApprovalRouting.Utils;
 
   /**
    * 根據 holder_type 切換欄位顯示
@@ -152,47 +154,43 @@
     }),
   );
 
-  // 儲存前驗證：選中的類型必須有值
+  /**
+   * holder_type 對應的必填檢查，回傳缺失時的錯誤訊息（無缺失回傳 null）。
+   * 供 create/edit（累積錯誤）與 index.edit（單一事件，立即彙整）共用。
+   * @param {Object} rec - event.record
+   * @returns {string|null}
+   */
+  const checkHolderRequired = (rec) => {
+    const holderType = rec[F.HOLDER_TYPE].value;
+    clearInactiveHolder(rec, holderType); // 儲存前強制清除非使用中的 holder 欄位，防止殘留舊資料寫入 DB
+
+    if (holderType === HT.GROUP && (!rec[F.HOLDER_GROUP].value || rec[F.HOLDER_GROUP].value.length === 0)) {
+      return '簽核者類型為「指定群組」時，請選擇簽核者群組。';
+    }
+    if (holderType === HT.USER && (!rec[F.HOLDER_USER].value || rec[F.HOLDER_USER].value.length === 0)) {
+      return '簽核者類型為「指定個人」時，請選擇簽核者。';
+    }
+    return null;
+  };
+
+  // 儲存前驗證（新增/編輯）：只累積錯誤，不在此彈窗——由最後執行的驗證 handler
+  // （07-role-name-selector.js，依上傳順序最後載入）統一彙整顯示一次 SweetAlert。
   kintone.events.on(
-    [
-      'app.record.create.submit',
-      'app.record.edit.submit',
-      'app.record.index.edit.submit',
-    ],
+    ['app.record.create.submit', 'app.record.edit.submit'],
     safeHandler(async (event) => {
-      const rec = event.record;
-      const holderType = rec[F.HOLDER_TYPE].value;
-
-      // 儲存前強制清除非使用中的 holder 欄位，防止殘留舊資料寫入 DB
-      clearInactiveHolder(rec, holderType);
-
-      if (
-        holderType === HT.GROUP &&
-        (!rec[F.HOLDER_GROUP].value || rec[F.HOLDER_GROUP].value.length === 0)
-      ) {
-        event.error = '請選擇簽核者群組';
-        await Swal.fire({
-          icon: 'warning',
-          title: '欄位未填寫',
-          text: '簽核者類型為「指定群組」時，請選擇簽核者群組。',
-          confirmButtonText: '確定',
-        });
-      }
-
-      if (
-        holderType === HT.USER &&
-        (!rec[F.HOLDER_USER].value || rec[F.HOLDER_USER].value.length === 0)
-      ) {
-        event.error = '請選擇簽核者（個人）';
-        await Swal.fire({
-          icon: 'warning',
-          title: '欄位未填寫',
-          text: '簽核者類型為「指定個人」時，請選擇簽核者。',
-          confirmButtonText: '確定',
-        });
-      }
-
+      const message = checkHolderRequired(event.record);
+      if (message) pushSubmitError(event, message);
       return event;
+    }),
+  );
+
+  // 清單頁行內編輯：本檔是唯一掛在此事件的驗證來源，驗證完立即彙整顯示（無需等其他 handler）
+  kintone.events.on(
+    ['app.record.index.edit.submit'],
+    safeHandler(async (event) => {
+      const message = checkHolderRequired(event.record);
+      if (message) pushSubmitError(event, message);
+      return flushSubmitErrors(event);
     }),
   );
 })();

@@ -16,6 +16,7 @@
  * 2026-04-19  Jimmy/Claude  支援顯示「所有上游路徑」與「下游路徑」，解決多對一匯流顯示問題
  * 2026-04-19  Jimmy/Claude  UI 全面升級：改版為輕量化 Timeline (圓點閃爍 + 連線) 風格
  * 2026-05-03  Jimmy/Claude  同名節點合併：上游同 roleName 的節點合為一個，hover tooltip 顯示「同仁（N位）」姓名清單
+ * 2026-07-12  Jimmy/Claude  新增頁未儲存記錄查不到角色時顯示佔位文字，不再誤報「找不到此角色的資料」
  */
 (() => {
   'use strict';
@@ -392,7 +393,15 @@
   const renderFullChainHtml = (currentRoleId, roleMap) => {
     const currentRole = roleMap.get(currentRoleId);
     if (!currentRole) {
-      return '<div style="color: #999; padding: 12px;">找不到此角色的資料，請確認是否已啟用。</div>';
+      // 新增中尚未儲存的記錄，role_id 還沒寫進資料庫，查不到是正常現象，非資料錯誤
+      let isUnsaved = false;
+      try {
+        isUnsaved = !kintone.app.record.get().record.$id?.value;
+      } catch { /* detail 頁必為已存在記錄 → 忽略 */ }
+
+      return isUnsaved
+        ? '<div style="color:#999; padding:12px;">儲存後即可預覽簽核鏈</div>'
+        : '<div style="color: #999; padding: 12px;">找不到此角色的資料，請確認是否已啟用。</div>';
     }
 
     // 注意這裡傳入空的 new Set()，修正稍早的循環報錯問題
