@@ -2,11 +2,13 @@
  * 員工起點對照表 — CSV 批量匯入 + dry-run 模式
  *
  * 在列表頁加入「批量匯入」按鈕，HR 可上傳 CSV 一次建立多筆員工起點。
- * CSV 格式：employee_code,entry_role_id（第一列為標題列）
+ * CSV 格式：員工帳號,角色名稱（第一列為標題列）
+ * 角色欄填 HR 看得懂的角色名稱（如 MIS_課長），程式查角色表轉成 role_id 寫入，
+ * 與兩表 UI「代碼對 HR 完全隱藏」的原則一致。
  *
  * 【影響的欄位】
- *   - employee: 由 CSV 的 employee_code 對應
- *   - entry_role_id: 由 CSV 的 entry_role_id 對應
+ *   - employee: 由 CSV 的員工帳號對應（dry-run 會驗證帳號存在於 kintone）
+ *   - entry_role_id: 由 CSV 的角色名稱查表轉為 role_id 寫入
  *   - is_active: 預設勾選「啟用中」
  *
  * 【依賴】
@@ -15,6 +17,10 @@
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-07-12  Jimmy/Claude  CSV 第二欄由 role_id 改為角色名稱（同名角色取代表 role_id，
+ *                             與下拉去重邏輯一致）；dry-run 加驗員工帳號存在、
+ *                             已有起點設定的員工列為跳過——匯入中斷後同一份 CSV
+ *                             可直接重傳，不會產生重複記錄
  */
 (() => {
   'use strict';
@@ -33,7 +39,7 @@
   /**
    * 解析 CSV 文字內容
    * @param {string} text
-   * @returns {Array<{employeeCode: string, entryRoleId: string}>}
+   * @returns {Array<{row: number, employeeCode: string, roleName: string}>}
    */
   const parseCsv = (text) => {
     const lines = text.split(/\r?\n/).filter((l) => l.trim());
@@ -45,13 +51,68 @@
       return {
         row: idx + 2, // 人類看的行號（標題是第 1 行）
         employeeCode: cols[0] || '',
-        entryRoleId: cols[1] || '',
+        roleName: cols[1] || '',
       };
     });
   };
 
+  /** 將陣列切成固定大小的批次（API 的 codes / in 查詢皆有筆數上限） */
+  const chunk = (arr, size) => {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  };
+
+  /**
+   * 查詢哪些員工帳號實際存在於 kintone
+   * @param {string[]} codes - 去重後的員工帳號清單
+   * @returns {Promise<Set<string>>} 存在的帳號集合
+   */
+  const fetchExistingUserCodes = async (codes) => {
+    const found = new Set();
+    // User API 路徑不帶 /k、直接傳給 kintone.api（與 04-chain-preview 的
+    // /v1/group/users 同一種呼叫方式，已在本專案實測可行）；codes 單次上限 100 筆
+    const results = await Promise.all(
+      chunk(codes, 100).map((part) =>
+        kintone.api('/v1/users', 'GET', { codes: part }),
+      ),
+    );
+    for (const resp of results) {
+      for (const u of resp.users || []) found.add(u.code);
+    }
+    return found;
+  };
+
+  /**
+   * 查詢哪些員工在本表已有起點設定（避免重複匯入；匯入中斷後可直接重傳同一份 CSV）
+   * @param {string[]} codes - 去重後的員工帳號清單
+   * @returns {Promise<Set<string>>} 已有記錄的帳號集合
+   */
+  const fetchAlreadyConfiguredCodes = async (codes) => {
+    const found = new Set();
+    // in 查詢的值不宜過長，每批 50 個帳號
+    const results = await Promise.all(
+      chunk(codes, 50).map((part) => {
+        const list = part.map((c) => `"${c}"`).join(', ');
+        return kintoneApi('/k/v1/records', 'GET', {
+          app: APP_ID.EMPLOYEE_ENTRY,
+          fields: [F.EMPLOYEE],
+          query: `${F.EMPLOYEE} in (${list}) limit 500`,
+        });
+      }),
+    );
+    for (const resp of results) {
+      for (const r of resp.records) {
+        for (const u of r[F.EMPLOYEE]?.value || []) found.add(u.code);
+      }
+    }
+    return found;
+  };
+
   /**
    * 驗證匯入資料（dry-run）
+   * 檢查五件事：空值、角色名稱存在、員工帳號存在、本表已有起點（跳過）、CSV 內重複。
+   * 角色以「名稱」比對並轉成 role_id（同名角色取第一筆為代表，與下拉去重邏輯一致）。
    * @param {Array} rows
    * @returns {Promise<{valid: Array, errors: Array<string>}>}
    */
@@ -59,31 +120,55 @@
     const errors = [];
     const valid = [];
 
-    // 取得所有啟用角色 ID 做比對
+    // 啟用角色的 名稱 → role_id 對照（同名取第一筆為代表）
     const resp = await kintoneApi('/k/v1/records', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
-      fields: [RF.ROLE_ID],
+      fields: [RF.ROLE_ID, RF.ROLE_NAME],
       query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,
     });
-    const activeRoleIds = new Set(resp.records.map((r) => r[RF.ROLE_ID].value));
+    const roleIdByName = new Map();
+    for (const r of resp.records) {
+      const name = r[RF.ROLE_NAME].value;
+      if (!roleIdByName.has(name)) roleIdByName.set(name, r[RF.ROLE_ID].value);
+    }
 
-    // 檢查重複的 employee_code
+    // 一次撈齊帳號相關資訊：kintone 使用者是否存在、本表是否已有起點
+    const allCodes = [...new Set(rows.map((r) => r.employeeCode).filter(Boolean))];
+    const [existingUsers, alreadyConfigured] = await Promise.all([
+      fetchExistingUserCodes(allCodes),
+      fetchAlreadyConfiguredCodes(allCodes),
+    ]);
+
+    // 檢查重複的員工帳號
     const seen = new Map();
 
     for (const row of rows) {
       // 空值檢查
       if (!row.employeeCode) {
-        errors.push(`第 ${row.row} 行：員工代碼為空`);
+        errors.push(`第 ${row.row} 行：員工帳號為空`);
         continue;
       }
-      if (!row.entryRoleId) {
-        errors.push(`第 ${row.row} 行：起點角色為空`);
+      if (!row.roleName) {
+        errors.push(`第 ${row.row} 行：角色名稱為空`);
         continue;
       }
 
-      // 角色是否存在
-      if (!activeRoleIds.has(row.entryRoleId)) {
-        errors.push(`第 ${row.row} 行：角色 ${row.entryRoleId} 不存在或未啟用`);
+      // 角色名稱是否存在（比對啟用中角色）
+      const roleId = roleIdByName.get(row.roleName);
+      if (!roleId) {
+        errors.push(`第 ${row.row} 行：角色「${row.roleName}」不存在或未啟用（請確認與角色表的名稱完全一致）`);
+        continue;
+      }
+
+      // 員工帳號是否存在於 kintone
+      if (!existingUsers.has(row.employeeCode)) {
+        errors.push(`第 ${row.row} 行：員工帳號「${row.employeeCode}」在 kintone 中不存在`);
+        continue;
+      }
+
+      // 本表已有該員工的起點設定 → 跳過（讓中斷後重傳同一份 CSV 成為安全操作）
+      if (alreadyConfigured.has(row.employeeCode)) {
+        errors.push(`第 ${row.row} 行：員工「${row.employeeCode}」已有起點設定，跳過（如需變更請直接編輯該筆記錄）`);
         continue;
       }
 
@@ -94,7 +179,7 @@
       }
       seen.set(row.employeeCode, row.row);
 
-      valid.push(row);
+      valid.push({ ...row, roleId });
     }
 
     return { valid, errors };
@@ -113,7 +198,7 @@
       const batch = rows.slice(i, i + BATCH_SIZE);
       const records = batch.map((row) => ({
         [F.EMPLOYEE]: { value: [{ code: row.employeeCode }] },
-        [F.ENTRY_ROLE_ID]: { value: row.entryRoleId },
+        [F.ENTRY_ROLE_ID]: { value: row.roleId }, // dry-run 已由角色名稱轉出 role_id
         [F.IS_ACTIVE]: { value: [CHECKBOX.ACTIVE] },
       }));
 
@@ -245,7 +330,7 @@
     });
 
     const hint = document.createElement('span');
-    hint.textContent = 'CSV 格式：employee_code, entry_role_id（第一列為標題）';
+    hint.textContent = 'CSV 格式：員工帳號, 角色名稱（第一列為標題，例：jimmy001, MIS_課長）';
     hint.style.cssText = 'font-size: 12px; color: #999;';
 
     wrapper.appendChild(fileInput);
