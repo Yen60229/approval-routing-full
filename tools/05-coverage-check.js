@@ -2,17 +2,25 @@
  * 涵蓋率檢查工具 — 找出「使用中但尚未納入簽核系統」的使用者，並可就地補設定
  *
  * 在角色定義表（685）或員工起點對照表（686）的列表頁加入「未設定名單」按鈕，
- * 掃描後以報告呈現兩類缺口，並提供快速補設定：
+ * 掃描後以報告呈現四類問題，並提供快速處理：
  *   A. 未設定起點 — 使用中、但 686 沒有起點記錄的人（無法送單，最優先處理）
  *        → 勾選多人 + 選一個起點角色 → 批量建立 686 記錄
  *   B. 不具簽核身分 — 使用中、但不在任何角色的 holder_user、也不在任何簽核群組的人
  *        → 勾選多人 + 選一個「指定個人」角色 → 批量加入該角色的 holder_user
  *          （同名角色視為同一關卡，會一併寫入所有同名記錄，維持一致性；
  *            群組型角色的成員仍由 IT 在 cybozu 後台維護，本工具不碰）
+ *   C. 已停用仍有起點 — kintone 帳號已停用、686 起點記錄卻仍啟用中
+ *        → 勾選多人 → 批量取消「啟用中」（保留記錄不刪除）
+ *   D. 已停用仍是簽核者 — 帳號已停用卻仍掛在角色的 holder_user 上，
+ *      流程跑到該關會卡死（停用帳號無法登入簽核）
+ *        → 勾選多人 → 批量自 holder_user 移除（其他簽核者不動）；
+ *          移除後若角色將沒有任何簽核者，確認視窗會醒目警告。
+ *          停用帳號若在「簽核群組」內，工具無法處理，列為提醒請 IT 至後台移除
  *
  * 【影響的欄位】
- *   - 686 employee / entry_role_id / is_active：A 區批量建立寫入
- *   - 685 holder_user：B 區快速指派以「附加」方式寫入（不覆蓋既有簽核者）
+ *   - 686 employee / entry_role_id / is_active：A 區批量建立寫入；C 區取消啟用中
+ *   - 685 holder_user：B 區快速指派以「附加」方式寫入（不覆蓋既有簽核者）；
+ *                      D 區自名單移除停用帳號（保留其他簽核者）
  *
  * 【依賴】
  *   - core/01-config.js（Config）
@@ -22,6 +30,8 @@
  *
  * 【變更履歷】
  *   2026-07-12  Jimmy/Claude  初版建立
+ *   2026-07-12  Jimmy/Claude  新增 C/D 區：已停用帳號的反向清理（停用起點記錄、
+ *                             自 holder_user 移除），並提醒 IT 處理群組內的停用帳號
  */
 (() => {
   'use strict';
@@ -89,12 +99,14 @@
     return all;
   };
 
-  /** 全公司「使用狀態＝使用中」的使用者（排除已停止的帳號） */
-  const fetchActiveUsers = async () => {
+  /** 全公司使用者，依「使用狀態」分為使用中與已停用兩組 */
+  const fetchAllUsers = async () => {
     const users = await fetchUserApiAll('/v1/users', {}, (r) => r.users);
-    return users
-      .filter((u) => u.valid !== false)
-      .map((u) => ({ code: u.code, name: u.name || u.code }));
+    const shape = (u) => ({ code: u.code, name: u.name || u.code });
+    return {
+      actives:   users.filter((u) => u.valid !== false).map(shape),
+      inactives: users.filter((u) => u.valid === false).map(shape),
+    };
   };
 
   /**
@@ -138,14 +150,14 @@
     );
 
     const holderCodes = new Set();
-    const groupCodes = new Set();
+    const groupNameByCode = new Map();   // 群組代碼 → 顯示名稱（供停用帳號提醒使用）
     const roles = [];
 
     for (const rec of records) {
       const holderType = rec[RF.HOLDER_TYPE]?.value || '';
       const holderUsers = (rec[RF.HOLDER_USER]?.value || []).map((u) => u.code);
       holderUsers.forEach((c) => holderCodes.add(c));
-      (rec[RF.HOLDER_GROUP]?.value || []).forEach((g) => groupCodes.add(g.code));
+      (rec[RF.HOLDER_GROUP]?.value || []).forEach((g) => groupNameByCode.set(g.code, g.name || g.code));
 
       roles.push({
         recordId: rec.$id.value,
@@ -156,38 +168,46 @@
       });
     }
 
-    // 展開所有簽核群組的成員（並行，群組數量級：數十）
-    for (const part of chunk([...groupCodes], CONFIG.ORG_PARALLEL)) {
+    // 展開所有簽核群組的成員（並行，群組數量級：數十）；保留逐群組名單供停用檢查
+    const groupMembers = new Map();      // 群組代碼 → 成員帳號[]
+    for (const part of chunk([...groupNameByCode.keys()], CONFIG.ORG_PARALLEL)) {
       await Promise.all(part.map(async (code) => {
         const members = await fetchUserApiAll('/v1/group/users', { code }, (r) => r.users);
-        members.forEach((u) => { if (u?.code) holderCodes.add(u.code); });
+        const codes = members.map((u) => u?.code).filter(Boolean);
+        groupMembers.set(code, codes);
+        codes.forEach((c) => holderCodes.add(c));
       }));
     }
 
-    return { holderCodes, roles };
+    return { holderCodes, roles, groupMembers, groupNameByCode };
   };
 
-  /** 686 已設定起點的帳號集合（僅計啟用中記錄） */
-  const fetchEmployeeCodes = async () => {
+  /** 686 啟用中的起點記錄（含記錄編號，供 C 區停用清理使用） */
+  const fetchEntryRecords = async () => {
     const records = await fetchRecordsAll(
       APP_ID.EMPLOYEE_ENTRY,
-      [EF.EMPLOYEE],
+      ['$id', EF.EMPLOYEE],
       `${EF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}")`,
     );
     const codes = new Set();
+    const recordIdsByCode = new Map();
     for (const rec of records) {
-      for (const u of rec[EF.EMPLOYEE]?.value || []) codes.add(u.code);
+      for (const u of rec[EF.EMPLOYEE]?.value || []) {
+        codes.add(u.code);
+        if (!recordIdsByCode.has(u.code)) recordIdsByCode.set(u.code, []);
+        recordIdsByCode.get(u.code).push(rec.$id.value);
+      }
     }
-    return codes;
+    return { codes, recordIdsByCode };
   };
 
   /** 主掃描：組出報告資料模型 */
   const runScan = async () => {
-    const [users, orgMap, roleCoverage, employeeCodes] = await Promise.all([
-      fetchActiveUsers(),
+    const [{ actives, inactives }, orgMap, roleCoverage, entryData] = await Promise.all([
+      fetchAllUsers(),
       fetchUserOrgMap(),
       fetchRoleCoverage(),
-      fetchEmployeeCodes(),
+      fetchEntryRecords(),
     ]);
 
     const decorate = (u) => ({
@@ -195,10 +215,40 @@
       units: orgMap.get(u.code) || [UNGROUPED_LABEL],
     });
 
+    // C：帳號已停用、686 起點記錄卻仍啟用中（帶記錄編號供批量停用）
+    const staleEntries = inactives
+      .filter((u) => entryData.codes.has(u.code))
+      .map((u) => ({ ...decorate(u), recordIds: entryData.recordIdsByCode.get(u.code) || [] }));
+
+    // D：帳號已停用、仍掛在角色的 holder_user 上（第三欄改列「擔任角色」方便定位）
+    const staleHolders = inactives
+      .map((u) => {
+        const held = roleCoverage.roles.filter((r) => r.holderUsers.includes(u.code));
+        return held.length
+          ? { ...u, units: [...new Set(held.map((r) => r.roleName))] }
+          : null;
+      })
+      .filter(Boolean);
+
+    // 簽核群組內的停用帳號：工具無法改群組成員，列為提醒請 IT 處理
+    const inactiveNameByCode = new Map(inactives.map((u) => [u.code, u.name]));
+    const groupWarnings = [];
+    for (const [gCode, members] of roleCoverage.groupMembers) {
+      const bad = members.filter((c) => inactiveNameByCode.has(c))
+        .map((c) => inactiveNameByCode.get(c));
+      if (bad.length) {
+        groupWarnings.push(`${roleCoverage.groupNameByCode.get(gCode) || gCode}：${bad.join('、')}`);
+      }
+    }
+
     return {
-      totalActive: users.length,
-      noEntry:  users.filter((u) => !employeeCodes.has(u.code)).map(decorate),
-      noHolder: users.filter((u) => !roleCoverage.holderCodes.has(u.code)).map(decorate),
+      totalActive: actives.length,
+      totalInactive: inactives.length,
+      noEntry:  actives.filter((u) => !entryData.codes.has(u.code)).map(decorate),
+      noHolder: actives.filter((u) => !roleCoverage.holderCodes.has(u.code)).map(decorate),
+      staleEntries,
+      staleHolders,
+      groupWarnings,
       roles: roleCoverage.roles,
     };
   };
@@ -248,6 +298,44 @@
     return targets.length;
   };
 
+  /** C 區：批量停用 686 起點記錄（取消勾選「啟用中」，記錄保留不刪除） */
+  const deactivateEntries = async (recordIds) => {
+    const updates = recordIds.map((id) => ({
+      id,
+      record: { [EF.IS_ACTIVE]: { value: [] } },
+    }));
+    for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
+      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
+    }
+  };
+
+  /**
+   * D 區前置計算：選定的停用帳號要從哪些角色記錄移除、移除後哪些角色會沒有簽核者
+   * 先算好再進確認視窗，讓使用者按下去之前就看得到「將清空」的警告
+   * @returns {{updates: Array, emptied: string[]}}
+   */
+  const planHolderRemoval = (userCodes, roles) => {
+    const remove = new Set(userCodes);
+    const targets = roles.filter((r) => r.holderUsers.some((c) => remove.has(c)));
+    const emptied = [];
+    const updates = targets.map((r) => {
+      const remain = r.holderUsers.filter((c) => !remove.has(c));
+      if (remain.length === 0 && r.holderType === HT.USER) emptied.push(r.roleName);
+      return {
+        id: r.recordId,
+        record: { [RF.HOLDER_USER]: { value: remain.map((code) => ({ code })) } },
+      };
+    });
+    return { updates, emptied: [...new Set(emptied)] };
+  };
+
+  /** D 區：執行 holder_user 移除 */
+  const removeHolders = async (updates) => {
+    for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
+      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
+    }
+  };
+
   // ═══════════════════════════════════════════════════════════════════
   // 報告 UI（自訂全螢幕覆蓋層；確認與結果用 SweetAlert）
   // ═══════════════════════════════════════════════════════════════════
@@ -256,9 +344,9 @@
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-  /** 匯出目前清單為 CSV（含 BOM 讓 Excel 正確顯示中文） */
-  const exportCsv = (rows, filename) => {
-    const lines = ['帳號,姓名,單位',
+  /** 匯出目前清單為 CSV（含 BOM 讓 Excel 正確顯示中文）；第三欄標題隨分頁而異 */
+  const exportCsv = (rows, filename, groupLabel = '單位') => {
+    const lines = [`帳號,姓名,${groupLabel}`,
       ...rows.map((u) => `"${u.code}","${u.name}","${u.units.join('、')}"`)];
     const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv' });
     const a = document.createElement('a');
@@ -269,10 +357,13 @@
   };
 
   /**
-   * 渲染單一分頁（A 或 B 共用）：工具列（單位篩選 + 搜尋 + 全選）、
-   * 人員表格、底部動作列（角色選擇 + 執行按鈕 + 匯出 CSV）
+   * 渲染單一分頁（A～D 共用）：工具列（第三欄篩選 + 搜尋 + 全選）、
+   * 人員表格、底部動作列（角色選擇〔選配〕 + 執行按鈕 + 匯出 CSV）
+   * @param {string} groupLabel  - 第三欄標題（A/B/C 用「單位」、D 用「擔任角色」），
+   *                               資料一律放在 users[].units
+   * @param {Array|null} roleOptions - 底部角色下拉的選項；null 表示此分頁不需要選角色
    */
-  const buildTab = ({ key, users, roleOptions, actionLabel, onAction, onExport }) => {
+  const buildTab = ({ key, users, groupLabel = '單位', roleOptions = null, actionLabel, onAction, onExport }) => {
     const root = document.createElement('div');
 
     // ── 工具列 ──
@@ -280,7 +371,7 @@
     const toolbar = document.createElement('div');
     toolbar.style.cssText = 'display:flex; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap;';
     toolbar.innerHTML = `
-      <label style="font-size:14px;">單位：
+      <label style="font-size:14px;">${esc(groupLabel)}：
         <select data-role="unit" style="font-size:14px; padding:6px;">
           <option value="">全部（${users.length} 人）</option>
           ${unitSet.map((o) => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}
@@ -303,7 +394,7 @@
           <th style="padding:8px; width:36px;"></th>
           <th style="padding:8px; text-align:left;">姓名</th>
           <th style="padding:8px; text-align:left;">帳號</th>
-          <th style="padding:8px; text-align:left;">單位</th>
+          <th style="padding:8px; text-align:left;">${esc(groupLabel)}</th>
         </tr>
       </thead>
       <tbody></tbody>`;
@@ -336,7 +427,8 @@
     const updateCount = () => {
       toolbar.querySelector('[data-role="count"]').textContent =
         `顯示 ${visible.length} 人／已勾選 ${checked.size} 人`;
-      actionBtn.disabled = checked.size === 0 || !roleSelect.value;
+      // 有角色下拉的分頁（A/B）要「勾了人 + 選了角色」才亮；C/D 勾了人就亮
+      actionBtn.disabled = checked.size === 0 || (roleSelect && !roleSelect.value);
       actionBtn.style.opacity = actionBtn.disabled ? '0.5' : '1';
     };
 
@@ -357,21 +449,23 @@
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; gap:12px; align-items:center; margin-top:12px; flex-wrap:wrap;';
 
-    const roleSelect = document.createElement('select');
-    roleSelect.style.cssText = 'font-size:14px; padding:8px; min-width:240px;';
-    roleSelect.innerHTML = `<option value="">— 選擇角色 —</option>` +
-      roleOptions.map((g) => `
-        <optgroup label="${esc(g.unit)}">
-          ${g.items.map((r) => `<option value="${esc(r.value)}">${esc(r.label)}</option>`).join('')}
-        </optgroup>`).join('');
-    roleSelect.addEventListener('change', updateCount);
+    const roleSelect = roleOptions ? document.createElement('select') : null;
+    if (roleSelect) {
+      roleSelect.style.cssText = 'font-size:14px; padding:8px; min-width:240px;';
+      roleSelect.innerHTML = `<option value="">— 選擇角色 —</option>` +
+        roleOptions.map((g) => `
+          <optgroup label="${esc(g.unit)}">
+            ${g.items.map((r) => `<option value="${esc(r.value)}">${esc(r.label)}</option>`).join('')}
+          </optgroup>`).join('');
+      roleSelect.addEventListener('change', updateCount);
+    }
 
     const actionBtn = document.createElement('button');
     actionBtn.textContent = actionLabel;
     actionBtn.style.cssText =
       'font-size:15px; padding:10px 24px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;';
     actionBtn.addEventListener('click', () =>
-      onAction([...checked], roleSelect.value, roleSelect.selectedOptions[0]?.textContent || ''));
+      onAction([...checked], roleSelect?.value || '', roleSelect?.selectedOptions[0]?.textContent || ''));
 
     const exportBtn = document.createElement('button');
     exportBtn.textContent = '匯出 CSV';
@@ -379,7 +473,8 @@
       'font-size:14px; padding:10px 18px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer; margin-left:auto;';
     exportBtn.addEventListener('click', () => onExport(visible));
 
-    footer.append(roleSelect, actionBtn, exportBtn);
+    if (roleSelect) footer.append(roleSelect);
+    footer.append(actionBtn, exportBtn);
     root.style.cssText = 'display:flex; flex-direction:column; height:100%;';
     root.append(toolbar, listWrap, footer);
     root.dataset.tab = key;
@@ -425,7 +520,7 @@
     panel.innerHTML = `
       <div style="display:flex; align-items:center; margin-bottom:4px;">
         <h2 style="font-size:18px; margin:0;">簽核系統涵蓋率檢查</h2>
-        <span style="font-size:13px; color:#666; margin-left:12px;">使用中帳號共 ${model.totalActive} 人</span>
+        <span style="font-size:13px; color:#666; margin-left:12px;">使用中帳號 ${model.totalActive} 人／已停用 ${model.totalInactive} 人</span>
         <button data-role="close" style="margin-left:auto; font-size:20px; border:none; background:none; cursor:pointer;">✕</button>
       </div>
       <div data-role="tabs" style="display:flex; gap:8px; margin:10px 0;"></div>
@@ -489,10 +584,78 @@
       onExport: (rows) => exportCsv(rows, `不具簽核身分_${new Date().toISOString().slice(0, 10)}.csv`),
     });
 
+    // ── C 分頁：已停用仍有起點 ──
+    const tabC = buildTab({
+      key: 'C',
+      users: model.staleEntries,
+      actionLabel: '停用起點設定',
+      onAction: async (codes) => {
+        const targets = model.staleEntries.filter((u) => codes.includes(u.code));
+        const recordIds = targets.flatMap((u) => u.recordIds);
+        if (!recordIds.length) return;
+        const ok = (await Swal.fire({
+          icon: 'question',
+          title: `停用 ${recordIds.length} 筆起點設定？`,
+          html: '這些員工的 kintone 帳號已停用。<br>只會取消勾選「啟用中」，記錄保留、不會刪除。',
+          showCancelButton: true, confirmButtonText: '確定停用', cancelButtonText: '取消',
+        })).isConfirmed;
+        if (!ok) return;
+
+        Swal.fire({ title: '停用中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        await deactivateEntries(recordIds);
+        await Swal.fire({ icon: 'success', title: `已停用 ${recordIds.length} 筆起點設定`, timer: 1800, showConfirmButton: false });
+        rescan();
+      },
+      onExport: (rows) => exportCsv(rows, `已停用仍有起點_${new Date().toISOString().slice(0, 10)}.csv`),
+    });
+
+    // ── D 分頁：已停用仍是簽核者 ──
+    const tabD = buildTab({
+      key: 'D',
+      users: model.staleHolders,
+      groupLabel: '擔任角色',
+      actionLabel: '自簽核者移除',
+      onAction: async (codes) => {
+        const { updates, emptied } = planHolderRemoval(codes, model.roles);
+        if (!updates.length) return;
+        const emptiedHtml = emptied.length
+          ? `<div style="color:#c0392b; font-weight:bold; margin-top:10px;">
+               注意：移除後「${esc(emptied.join('、'))}」將沒有任何簽核者，請盡快補人！
+             </div>`
+          : '';
+        const ok = (await Swal.fire({
+          icon: 'warning',
+          title: `將 ${codes.length} 個停用帳號自簽核者移除？`,
+          html: `會更新 ${updates.length} 筆角色記錄，其他簽核者不受影響。${emptiedHtml}`,
+          showCancelButton: true, confirmButtonText: '確定移除', cancelButtonText: '取消',
+        })).isConfirmed;
+        if (!ok) return;
+
+        Swal.fire({ title: '移除中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        await removeHolders(updates);
+        await Swal.fire({ icon: 'success', title: `已自 ${updates.length} 筆角色記錄移除停用帳號`, timer: 2000, showConfirmButton: false });
+        rescan();
+      },
+      onExport: (rows) => exportCsv(rows, `已停用仍是簽核者_${new Date().toISOString().slice(0, 10)}.csv`, '擔任角色'),
+    });
+
+    // 簽核群組內的停用帳號：工具無法改群組成員，插入提醒橫幅請 IT 至 cybozu 後台處理
+    if (model.groupWarnings.length) {
+      const warn = document.createElement('div');
+      warn.style.cssText =
+        'background:#fff3cd; border:1px solid #f0c36d; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px;';
+      warn.innerHTML =
+        '<strong>以下簽核群組內有已停用的帳號</strong>（群組成員請 IT 至 cybozu 後台移除，本工具無法代勞）：<br>' +
+        model.groupWarnings.map((w) => `・${esc(w)}`).join('<br>');
+      tabD.prepend(warn);
+    }
+
     // ── 分頁切換 ──
     const tabs = [
       { key: 'A', label: `A. 未設定起點（${model.noEntry.length} 人）`, el: tabA, hint: '這些人目前無法送單' },
       { key: 'B', label: `B. 不具簽核身分（${model.noHolder.length} 人）`, el: tabB, hint: '多數基層同仁本來就不簽核，此區用於確認主管沒被漏掉' },
+      { key: 'C', label: `C. 已停用仍有起點（${model.staleEntries.length} 人）`, el: tabC, hint: '帳號已停用但起點記錄仍啟用中，建議停用避免誤導' },
+      { key: 'D', label: `D. 已停用仍是簽核者（${model.staleHolders.length} 人）`, el: tabD, hint: '帳號已停用卻仍是簽核者，流程跑到該關會卡住，請盡快移除' },
     ];
     const switchTo = (key) => {
       bodyEl.innerHTML = '';
