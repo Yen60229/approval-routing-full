@@ -557,7 +557,7 @@
    * @param {Function} onChange - 選取值變動時回呼（用來更新執行按鈕的啟用狀態）
    * @returns {{el: HTMLElement, getValue: Function, getLabel: Function}}
    */
-  const buildRoleCombo = (groups, onChange) => {
+  const buildRoleCombo = (groups, onChange, { openUp = true, minWidth = '300px' } = {}) => {
     const options = groups.flatMap((g) => g.items.map((it) => ({ ...it, unit: g.unit })));
 
     const wrap = document.createElement('div');
@@ -568,12 +568,13 @@
     input.autocomplete = 'off';
     input.placeholder = `輸入關鍵字搜尋角色…（共 ${options.length} 個）`;
     input.style.cssText =
-      'font-size:14px; padding:8px 10px; min-width:300px; box-sizing:border-box; ' +
+      `font-size:14px; padding:8px 10px; min-width:${minWidth}; box-sizing:border-box; ` +
       'border:1px solid #ccc; border-radius:6px;';
 
     const panel = document.createElement('div');
     panel.style.cssText =
-      'position:absolute; bottom:calc(100% + 4px); left:0; min-width:340px; max-height:300px; ' +
+      'position:absolute; left:0; min-width:340px; max-height:300px; ' +
+      `${openUp ? 'bottom' : 'top'}:calc(100% + 4px); ` +
       'overflow-y:auto; background:#fff; border:1px solid #ccc; border-radius:6px; ' +
       'box-shadow:0 4px 16px rgba(0,0,0,.18); z-index:10; display:none;';
 
@@ -697,6 +698,16 @@
       el: wrap,
       getValue: () => selected?.value || '',
       getLabel: () => selected?.label || '',
+      /**
+       * 由外部指定選取值（自動配對帶入用）。
+       * 刻意不觸發 onChange——大量初始化時由呼叫端最後統一刷新一次即可。
+       * 傳入的值找不到對應選項時視為未選取。
+       */
+      setValue: (value) => {
+        const o = options.find((x) => x.value === value);
+        selected = o ? { value: o.value, label: o.label } : null;
+        input.value = selected?.label || '';
+      },
     };
   };
 
@@ -905,11 +916,15 @@
   const buildRoleOptions = (roles, { userTypeOnly = false, valueBy = 'roleId' } = {}) => {
     const seen = new Set();
     const groups = new Map();
-    for (const r of roles) {
+    // 同名角色有多筆時固定取記錄編號最小者，與 matchEntryRole 的選法一致，
+    // 自動配對帶入的 role_id 才一定找得到對應選項
+    const sorted = [...roles].sort((a, b) => Number(a.recordId) - Number(b.recordId));
+    for (const r of sorted) {
       if (userTypeOnly && r.holderType !== HT.USER) continue;
       if (seen.has(r.roleName)) continue;
       seen.add(r.roleName);
-      const unit = r.roleName.split('_')[0] || UNGROUPED_LABEL;
+      // 直接用 unit_name 欄位，不從 role_name 切字串（分隔符號不見得是底線）
+      const unit = r.unitName || UNGROUPED_LABEL;
       if (!groups.has(unit)) groups.set(unit, []);
       groups.get(unit).push({
         value: valueBy === 'roleId' ? r.roleId : r.roleName,
