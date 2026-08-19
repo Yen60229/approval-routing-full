@@ -21,6 +21,8 @@
  *                             與下拉去重邏輯一致）；dry-run 加驗員工帳號存在、
  *                             已有起點設定的員工列為跳過——匯入中斷後同一份 CSV
  *                             可直接重傳，不會產生重複記錄
+ *   2026-08-19  Jimmy/Claude  dry-run 加驗「帳號已停用」（以登入名稱查得的 valid 為準），
+ *                             離職又回鍋者提示改用新帳號的登入名稱
  */
 (() => {
   'use strict';
@@ -64,12 +66,19 @@
   };
 
   /**
-   * 查詢哪些員工帳號實際存在於 kintone
+   * 查詢員工帳號在 kintone 的存在與「使用狀態」
+   *
+   * 使用狀態一律以**登入名稱（code）**查得的 valid 為準，不用姓名判斷：
+   * 離職又回鍋的同事會有舊停用帳號 + 新在職帳號，兩者姓名相同、登入名稱不同，
+   * 用姓名比對會誤判成停用。
+   *
    * @param {string[]} codes - 去重後的員工帳號清單
-   * @returns {Promise<Set<string>>} 存在的帳號集合
+   * @returns {Promise<{existing: Set<string>, inactive: Map<string, string>}>}
+   *   existing：存在的帳號集合；inactive：已停用的帳號 → 姓名
    */
-  const fetchExistingUserCodes = async (codes) => {
-    const found = new Set();
+  const fetchUserStatus = async (codes) => {
+    const existing = new Set();
+    const inactive = new Map();
     // User API 路徑不帶 /k、直接傳給 kintone.api（與 04-chain-preview 的
     // /v1/group/users 同一種呼叫方式，已在本專案實測可行）；codes 單次上限 100 筆
     const results = await Promise.all(
@@ -78,9 +87,12 @@
       ),
     );
     for (const resp of results) {
-      for (const u of resp.users || []) found.add(u.code);
+      for (const u of resp.users || []) {
+        existing.add(u.code);
+        if (u.valid === false) inactive.set(u.code, u.name || u.code);
+      }
     }
-    return found;
+    return { existing, inactive };
   };
 
   /**
@@ -111,7 +123,8 @@
 
   /**
    * 驗證匯入資料（dry-run）
-   * 檢查五件事：空值、角色名稱存在、員工帳號存在、本表已有起點（跳過）、CSV 內重複。
+   * 檢查六件事：空值、角色名稱存在、員工帳號存在、帳號未停用、
+   * 本表已有起點（跳過）、CSV 內重複。
    * 角色以「名稱」比對並轉成 role_id（同名角色取第一筆為代表，與下拉去重邏輯一致）。
    * @param {Array} rows
    * @returns {Promise<{valid: Array, errors: Array<string>}>}
@@ -134,10 +147,11 @@
 
     // 一次撈齊帳號相關資訊：kintone 使用者是否存在、本表是否已有起點
     const allCodes = [...new Set(rows.map((r) => r.employeeCode).filter(Boolean))];
-    const [existingUsers, alreadyConfigured] = await Promise.all([
-      fetchExistingUserCodes(allCodes),
-      fetchAlreadyConfiguredCodes(allCodes),
-    ]);
+    const [{ existing: existingUsers, inactive: inactiveUsers }, alreadyConfigured] =
+      await Promise.all([
+        fetchUserStatus(allCodes),
+        fetchAlreadyConfiguredCodes(allCodes),
+      ]);
 
     // 檢查重複的員工帳號
     const seen = new Map();
@@ -163,6 +177,15 @@
       // 員工帳號是否存在於 kintone
       if (!existingUsers.has(row.employeeCode)) {
         errors.push(`第 ${row.row} 行：員工帳號「${row.employeeCode}」在 kintone 中不存在`);
+        continue;
+      }
+
+      // 帳號是否已停用（以登入名稱查得的 valid 為準，不用姓名判斷）
+      if (inactiveUsers.has(row.employeeCode)) {
+        errors.push(
+          `第 ${row.row} 行：員工帳號「${row.employeeCode}」（${inactiveUsers.get(row.employeeCode)}）` +
+          `已停用，無法送單；若本人已回任，請改用新帳號的登入名稱`,
+        );
         continue;
       }
 
