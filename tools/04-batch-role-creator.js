@@ -5,8 +5,13 @@
  * 1. 讀取 CSV，支援「登入帳號 / 使用者名稱 / title_level」或舊版「code / title」欄位。
  * 2. 以 CSV 的登入帳號對應後台登入名稱、使用者名稱對應後台顯示名稱，解析成真正的使用者 code。
  * 3. 依每位同仁每個所屬組織各建一列；兼任 N 個部門者顯示 N 列，每列可獨立設定。
- * 4. 每個組織卡片提供 unit_name 與 title_level 批次帶入，仍可逐列微調。
+ *    人員欄一併顯示該組織的「職務」（kintone 後台設定），並自動對應成 title_level。
+ * 4. 每個組織卡片提供 unit_name 與 title_level 批次帶入，仍可逐列微調；
+ *    另有「依職務帶入」可一鍵用職務填滿整組的 title_level。
  * 5. 批次建立角色定義記錄，寫入 unit_name / title_level / holder_user / is_active。
+ * 6. 匯入時自動比對 App 685 既有記錄：該人已被設為某角色的簽核者時，整列以
+ *    黃底 + 「已建立」徽章醒目標示，並可從下拉挑一筆既有角色接續編輯，
+ *    儲存時走 PUT 更新（不會重複建立），也可改選「建立為新角色」照常新增。
  *
  * 【變更履歷】
  *   2026-05-01  Jimmy/Claude  unit_name / title_level 兩個下拉選項一律從
@@ -19,6 +24,13 @@
  *                              列狀態圖示（✓已存 / ●待更新），避免整批失敗需重填
  *   2026-05-03  Jimmy/Claude  修正 CB_IL02：補上必填欄位 role_name（unit_name_title_level）
  *                              與 signing_mode；卡片批控區新增 signing_mode 下拉選單
+ *   2026-08-19  Jimmy/Claude  匯入時比對既有角色記錄：已存在者整列醒目標示，
+ *                              可挑既有角色接續編輯並以 PUT 更新，避免重複建立
+ *   2026-08-19  Jimmy/Claude  人員清單顯示 kintone 後台「職務」，並據以自動帶入
+ *                              title_level；卡片新增「依職務帶入」一鍵套用
+ *   2026-08-19  Jimmy/Claude  使用者解析改以「登入名稱 + valid」判定使用狀態：同名帳號
+ *                              全部保留、姓名比對只認使用中者、停用帳號一律擋下並指出
+ *                              同名的在職帳號。修正離職又回鍋同事被誤判為停用的問題
  */
 (function () {
   'use strict';
@@ -53,6 +65,10 @@
   let _unitNameOptions = [];
   let _allGroups = [];
   let _rowUniqueId = 10000; // 動態新增列的唯一 ID 起點，避免與 CSV 解析列的 rIdx 衝突
+  /** 使用者帳號（normalize 後）→ 該人現有的角色記錄陣列，用於偵測「已建立且存在」 */
+  let _existingRolesByUser = new Map();
+  /** 使用者帳號（normalize 後）→ [{ name, title }]，避免同一人重複打組織 API */
+  const _userOrgCache = new Map();
 
   const _esc = (s) =>
     String(s == null ? '' : s)
@@ -112,12 +128,17 @@
   const buildUnitDatalist = () =>
     `<datalist id="br-unit-datalist">${_unitNameOptions.map((o) => `<option value="${_esc(o)}">`).join('')}</datalist>`;
 
-  /** 產生人員搜尋共用 datalist（value = loginCode，文字提示為顯示名稱） */
+  /**
+   * 產生人員搜尋共用 datalist（value = loginCode，文字提示為顯示名稱）
+   * 只列使用中的帳號：已停用者（含離職又回鍋者的舊帳號）不該被選為簽核者，
+   * 從建議清單就排除掉，比事後報錯更省事。
+   */
   const buildPersonDatalist = () => {
     if (!_userDirectory || !_userDirectory.users) {
       return '<datalist id="br-person-datalist"></datalist>';
     }
     const options = _userDirectory.users
+      .filter(isActiveUser)
       .map((u) => `<option value="${_esc(u.code)}">${_esc(u.name)}</option>`)
       .join('');
     return `<datalist id="br-person-datalist">${options}</datalist>`;
@@ -422,6 +443,35 @@
         line-height: 1.65;
       }
 
+      /* ── 職務（來自 kintone 組織設定，供對照設 title_level）── */
+      .job-title {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 4px;
+        background: #eef2ff;
+        border: 1px solid #c7d2fe;
+        color: #3730a3;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .job-title-empty {
+        background: #f3f4f6;
+        border-color: #e5e7eb;
+        color: #9ca3af;
+        font-weight: 400;
+      }
+      .job-applied {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 1px 7px;
+        border-radius: 4px;
+        background: #dcfce7;
+        color: #166534;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .job-applied-guess { background: #fef3c7; color: #92400e; }
+
       /* ── role_name 預覽 ── */
       .row-preview {
         display: inline-block;
@@ -513,6 +563,58 @@
       /* ── 卡片儲存狀態文字 ── */
       .card-save-status { font-size: 13px; font-weight: 600; }
 
+      /* ── 已存在於 685 的人員列：黃底 + 左側粗邊，讓 HR 一眼看到「這不是新增」 ── */
+      .org-table tr.row-existing td {
+        background: #fffbea;
+        box-shadow: inset 0 0 0 9999px rgba(245,158,11,.04);
+      }
+      .org-table tr.row-existing:hover td { background: #fff4d6; }
+      .org-table tr.row-existing td:first-child {
+        border-left: 5px solid #f59e0b;
+        padding-left: 11px;
+      }
+      /* 已綁定既有記錄（送出時會走更新）再加深一層，與「只是有既有角色」區隔 */
+      .org-table tr.row-existing.row-bound td:first-child { border-left-color: #d97706; }
+
+      .badge-exists {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        background: #f59e0b;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        vertical-align: middle;
+        white-space: nowrap;
+      }
+      .badge-bound { background: #d97706; }
+
+      .existing-picker { margin-top: 7px; }
+      .existing-picker select {
+        width: 100%;
+        padding: 7px 10px !important;
+        border-color: #f0c040 !important;
+        background: #fffdf5 !important;
+        font-size: 13px !important;
+        font-weight: 600;
+      }
+      .existing-hint {
+        margin-top: 4px;
+        color: #92400e;
+        font-size: 12px;
+        line-height: 1.55;
+        font-weight: 600;
+      }
+
+      /* ── 匯入摘要提示（既有人員數量）── */
+      .status-warn {
+        display: block !important;
+        background: #fef3c7;
+        border: 1.5px solid #f0c040;
+        color: #7c2d12;
+      }
+
       /* ── 索引頁入口按鈕 ── */
       #btn-open-batch-role {
         margin-left: 16px;
@@ -569,6 +671,12 @@
             <p class="helper-text">
               每張卡片代表一個部門。同仁兼任 N 個部門 → 出現在 N 張卡片各一列，可分別設定不同的
               <code>unit_name</code> 與 <code>title_level</code>；卡片上方可批次帶入，底下仍可逐列微調。
+              <br>
+              <span style="display:inline-block;margin-top:6px;padding:4px 10px;background:#fffbea;border:1.5px solid #f0c040;border-radius:5px;">
+                <strong style="color:#92400e;">黃色列</strong>＝這個人在角色定義表已經有記錄。
+                預設仍是「建立為新角色」；若要改既有的，請在該列下拉選<strong>「更新既有：⋯」</strong>，
+                欄位會自動帶入原值供修改，儲存時走更新、不會重複建立。
+              </span>
             </p>
             <div id="br-groups-container"></div>
 
@@ -605,18 +713,65 @@
     }
 
     const byCode = new Map();
-    const byName = new Map();
+    const byName = new Map();   // 姓名 → 同名帳號**清單**
 
     users.forEach((user) => {
       const codeKey = normalize(user.code);
       const nameKey = normalize(user.name);
+      // 登入名稱（code）是唯一鍵，可直接對應
       if (codeKey && !byCode.has(codeKey)) byCode.set(codeKey, user);
-      if (nameKey && !byName.has(nameKey)) byName.set(nameKey, user);
+      // 姓名不唯一（離職又回鍋者會有舊停用帳號 + 新在職帳號），必須全部留著，
+      // 由 resolveUserByName 依「使用狀態」挑，不能取第一筆就算
+      if (nameKey) {
+        if (!byName.has(nameKey)) byName.set(nameKey, []);
+        byName.get(nameKey).push(user);
+      }
     });
 
     _userDirectory = { users, byCode, byName };
     return _userDirectory;
   }
+
+  /** 帳號是否為「使用中」（kintone /v1/users 的 valid；未回傳時視為使用中） */
+  const isActiveUser = (user) => !!user && user.valid !== false;
+
+  /** 取同名的在職帳號（供停用帳號的錯誤訊息指路：離職又回鍋者的新帳號） */
+  const activeSameName = (directory, displayName, excludeCode) =>
+    (directory.byName.get(normalize(displayName)) || [])
+      .filter((u) => isActiveUser(u) && normalize(u.code) !== normalize(excludeCode || ''))[0] || null;
+
+  /**
+   * 以「姓名」解析使用者 — 只認使用中的帳號
+   *
+   * 離職又回鍋的同事在 kintone 會留下兩個帳號（舊的已停用、新的使用中），
+   * 姓名相同但登入名稱不同。單純用姓名比對可能對到已停用的舊帳號，
+   * 因此這裡一律先過濾使用狀態，並在無法判斷時明確要求改用登入帳號。
+   *
+   * @returns {{user?: Object, error?: string}}
+   */
+  const resolveUserByName = (directory, displayName) => {
+    const list = directory.byName.get(normalize(displayName)) || [];
+    if (!list.length) {
+      return { error: `找不到使用者：使用者名稱「${displayName}」無法對應到後台使用者。` };
+    }
+
+    const actives = list.filter(isActiveUser);
+    if (actives.length === 1) return { user: actives[0] };
+
+    if (actives.length > 1) {
+      return {
+        error: `使用者名稱「${displayName}」有 ${actives.length} 個使用中的帳號（` +
+               `${actives.map((u) => u.code).join('、')}），無法判斷是哪一位，` +
+               `請在 CSV 改用「登入帳號」欄指定。`,
+      };
+    }
+
+    return {
+      error: `使用者名稱「${displayName}」在後台只找得到已停用的帳號（` +
+             `${list.map((u) => u.code).join('、')}），不能設為簽核者。` +
+             `若本人已回任，請改用新帳號的登入名稱。`,
+    };
+  };
 
   async function fetchAllGroups() {
     if (_allGroups.length) return _allGroups;
@@ -654,7 +809,86 @@
     return _allGroups;
   }
 
+  /**
+   * 撈 App 685 全部角色記錄，建「使用者帳號 → 該人現有角色記錄」對照。
+   *
+   * 只以 holder_user 建索引（群組型角色的成員由 cybozu 後台維護，本工具不碰）。
+   * 一筆記錄若掛多位簽核者，會同時出現在每個人的清單裡——選到同一筆去更新時，
+   * buildRowRecord 會把 holder_user 覆寫成該列的人，因此提示文字會標明簽核者人數，
+   * 讓 HR 知道這筆是共用關卡、更新前要想清楚。
+   */
+  async function fetchExistingRoles() {
+    const appId = kintone.app.getId();
+    if (!appId) throw new Error('kintone.app.getId() 回傳 null，請確認此 JS 已上傳至 App 685 的「自訂設定」');
+
+    const PAGE = 500;
+    const records = [];
+    let offset = 0;
+
+    while (true) {
+      const resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', {
+        app: appId,
+        fields: ['$id', 'role_id', 'role_name', 'unit_name', 'title_level',
+                 'holder_type', 'holder_user', 'signing_mode', 'is_active'],
+        query: `order by $id asc limit ${PAGE} offset ${offset}`,
+      });
+      const batch = Array.isArray(resp.records) ? resp.records : [];
+      records.push(...batch);
+      if (batch.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    const map = new Map();
+    records.forEach((r) => {
+      const holders = (r.holder_user && r.holder_user.value) || [];
+      if (!holders.length) return;
+
+      const info = {
+        recordId:    r.$id.value,
+        roleId:      (r.role_id && r.role_id.value) || '',
+        roleName:    (r.role_name && r.role_name.value) || '',
+        unitName:    (r.unit_name && r.unit_name.value) || '',
+        titleLevel:  (r.title_level && r.title_level.value) || '',
+        holderType:  (r.holder_type && r.holder_type.value) || HOLDER_TYPE_USER,
+        signingMode: (r.signing_mode && r.signing_mode.value) || '',
+        holderCount: holders.length,
+        isActive:    (((r.is_active && r.is_active.value) || []).indexOf(ACTIVE_VALUE) >= 0),
+      };
+
+      holders.forEach((u) => {
+        const key = normalize(u.code);
+        if (!key) return;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(info);
+      });
+    });
+
+    // 同一人多筆時，啟用中的排前面，其次依 role_name，方便挑選
+    map.forEach((list) => {
+      list.sort((a, b) => {
+        if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+        return a.roleName.localeCompare(b.roleName, 'zh-Hant');
+      });
+    });
+
+    _existingRolesByUser = map;
+    return map;
+  }
+
+  /**
+   * 取某人的所屬組織與該組織的「職務」
+   *
+   * kintone 的職務掛在「人 × 組織」上（organizationTitles[].title），
+   * 兼任多單位者每個單位的職務可能不同，因此一併回傳、逐列顯示，
+   * 讓 HR 對照著設 title_level 不用再回後台查。
+   *
+   * @returns {Promise<Array<{name: string, title: string}>>} 依組織名稱排序
+   */
   async function fetchUserOrgs(code) {
+    const cacheKey = normalize(code);
+    if (_userOrgCache.has(cacheKey)) return _userOrgCache.get(cacheKey);
+
+    let result;
     try {
       const resp = await kintone.api(
         kintone.api.url('/v1/user/organizations.json', true),
@@ -662,15 +896,57 @@
         { code },
       );
 
-      const names = (resp.organizationTitles || [])
-        .map((item) => item && item.organization && item.organization.name)
-        .filter(Boolean);
+      const seen = new Set();
+      const orgs = [];
+      (resp.organizationTitles || []).forEach((item) => {
+        const name = item && item.organization && item.organization.name;
+        if (!name || seen.has(name)) return;
+        seen.add(name);
+        orgs.push({ name, title: (item.title && item.title.name) || '' });
+      });
 
-      return names.length ? Array.from(new Set(names)).sort() : [FALLBACK_ORG_NAME];
+      orgs.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+      result = orgs.length ? orgs : [{ name: FALLBACK_ORG_NAME, title: '' }];
     } catch (error) {
       console.warn(`[batch-role-creator] fetchUserOrgs failed for ${code}`, error);
-      return [FALLBACK_ORG_NAME];
+      result = [{ name: FALLBACK_ORG_NAME, title: '' }];
     }
+
+    _userOrgCache.set(cacheKey, result);
+    return result;
+  }
+
+  /**
+   * 由 kintone 職務推測對應的 title_level 選項
+   *
+   * 比對順序（職稱通常落在字串結尾，所以先比結尾）：
+   *   1. 完全相同             職務「課長」        → 課長
+   *   2. 以選項結尾，取最長     職務「資訊本部長」  → 本部長（不是「部長」）
+   *   3. 包含選項，取最靠後者   職務「總經理室 擔當」→ 擔當（不是「總經理」）
+   * 都沒中就回空字串，不亂猜，交給 HR 自己選。
+   *
+   * @returns {{value: string, exact: boolean}} value 為空表示無法對應
+   */
+  function guessTitleLevel(jobTitle) {
+    const raw = String(jobTitle || '').trim();
+    if (!raw || !_titleLevelOptions.length) return { value: '', exact: false };
+
+    const exact = _titleLevelOptions.find((opt) => opt === raw);
+    if (exact) return { value: exact, exact: true };
+
+    const bySuffix = _titleLevelOptions
+      .filter((opt) => opt && raw.endsWith(opt))
+      .sort((a, b) => b.length - a.length)[0];
+    if (bySuffix) return { value: bySuffix, exact: false };
+
+    const byPosition = _titleLevelOptions
+      .filter((opt) => opt && raw.indexOf(opt) >= 0)
+      .sort((a, b) => {
+        const diff = raw.lastIndexOf(b) - raw.lastIndexOf(a);
+        return diff !== 0 ? diff : b.length - a.length;
+      })[0];
+
+    return byPosition ? { value: byPosition, exact: false } : { value: '', exact: false };
   }
 
   function parseCSVRows(raw) {
@@ -731,29 +1007,46 @@
       .filter((row) => row.loginAccount || row.displayName);
   }
 
+  /**
+   * 解析 CSV 一列對應到哪個 kintone 使用者
+   *
+   * 判定原則：**登入名稱（code）是唯一鍵，只要有給就以它為準**；
+   * 沒給才退回姓名，且姓名一律只認使用中的帳號。
+   * 使用狀態一律看該 code 的 valid，不看姓名——否則離職又回鍋的同事
+   * （舊帳號停用、新帳號使用中、姓名相同）會被誤判成停用。
+   */
   function resolveCsvUser(row, directory) {
-    const byCodeUser = row.loginAccount
-      ? directory.byCode.get(normalize(row.loginAccount))
-      : null;
-    const byNameUser = row.displayName
-      ? directory.byName.get(normalize(row.displayName))
-      : null;
+    if (row.loginAccount) {
+      const user = directory.byCode.get(normalize(row.loginAccount));
+      if (!user) {
+        throw new Error(`找不到使用者：登入帳號「${row.loginAccount}」在後台不存在。`);
+      }
 
-    if (byCodeUser && byNameUser) {
-      if (normalize(byCodeUser.code) === normalize(byNameUser.code)) return byCodeUser;
-      throw new Error(
-        `CSV 資料不一致：登入帳號「${row.loginAccount}」對到 ${byCodeUser.name}，但使用者名稱「${row.displayName}」對到 ${byNameUser.code}。`,
-      );
+      if (!isActiveUser(user)) {
+        const alt = activeSameName(directory, user.name, user.code);
+        throw new Error(
+          `登入帳號「${row.loginAccount}」（${user.name}）已停用，不能設為簽核者。` +
+          (alt ? `同名的使用中帳號是「${alt.code}」，請改用它。` : ''),
+        );
+      }
+
+      // 兩欄都有給時做交叉檢核，但以 code 查到的人為準
+      if (row.displayName && normalize(user.name) !== normalize(row.displayName)) {
+        throw new Error(
+          `CSV 資料不一致：登入帳號「${row.loginAccount}」在後台是「${user.name}」，` +
+          `與使用者名稱欄的「${row.displayName}」不符。`,
+        );
+      }
+      return user;
     }
 
-    if (byCodeUser) return byCodeUser;
-    if (byNameUser) return byNameUser;
+    if (row.displayName) {
+      const { user, error } = resolveUserByName(directory, row.displayName);
+      if (error) throw new Error(error);
+      return user;
+    }
 
-    const accountText = row.loginAccount || '空白';
-    const nameText = row.displayName || '空白';
-    throw new Error(
-      `找不到使用者：登入帳號「${accountText}」、使用者名稱「${nameText}」都無法對應到後台使用者。`,
-    );
+    throw new Error('找不到使用者：登入帳號與使用者名稱皆為空白。');
   }
 
   async function parseCSVAndFetchOrgs() {
@@ -780,6 +1073,16 @@
       await loadFieldOptions();
       const directory = await fetchAllUsers();
       await fetchAllGroups();
+
+      statusEl.textContent = '比對 685 既有角色記錄中...';
+      try {
+        await fetchExistingRoles();
+      } catch (existErr) {
+        // 比對失敗不阻斷匯入，但要讓 HR 知道「這次沒有重複偵測」，避免誤以為都是新的
+        console.warn('[batch-role-creator] fetchExistingRoles failed', existErr);
+        _existingRolesByUser = new Map();
+      }
+
       const resolvedUsers = [];
 
       for (let i = 0; i < rows.length; i++) {
@@ -790,14 +1093,19 @@
         const allOrgs = await fetchUserOrgs(user.code);
 
         // 每個所屬組織建立獨立一列，兼任 N 個單位 → N 行可分別設定
+        // 職務（jobTitle）取該組織的職務；CSV 沒指定 title_level 時用它自動帶入
         for (const singleOrg of allOrgs) {
+          const guessed = row.titleLevel ? null : guessTitleLevel(singleOrg.title);
           resolvedUsers.push({
             code: user.code,
             loginAccount: user.code,
             displayName: user.name || row.displayName || user.code,
-            titleLevel: row.titleLevel,
+            titleLevel: row.titleLevel || (guessed ? guessed.value : ''),
+            titleFromJob: Boolean(guessed && guessed.value),
+            titleGuessExact: Boolean(guessed && guessed.exact),
+            jobTitle: singleOrg.title,
             allOrgs,
-            groupKey: singleOrg,
+            groupKey: singleOrg.name,
           });
         }
       }
@@ -831,7 +1139,27 @@
         .sort((a, b) => a.orgName.localeCompare(b.orgName, 'zh-Hant'));
 
       renderGroupsUI();
-      hideStatus('br-parse-status');
+
+      // 匯入摘要：有多少人在 685 已經有角色，提前用黃色提示條說清楚
+      const existingNames = [...new Set(
+        [...dedupedMap.values()]
+          .filter((u) => (_existingRolesByUser.get(normalize(u.code)) || []).length)
+          .map((u) => u.displayName),
+      )];
+
+      if (existingNames.length) {
+        const preview = existingNames.slice(0, 8).join('、');
+        const more = existingNames.length > 8 ? ` 等 ${existingNames.length} 人` : '';
+        showStatus(
+          'br-parse-status',
+          'warn',
+          `⚠ 其中 ${existingNames.length} 人在角色定義表已經有記錄（${preview}${more}），` +
+          `已用黃色標示。想改既有角色請在該列選一筆「更新既有」，儲存時會更新原記錄；` +
+          `維持「建立為新角色」則照常新增一筆。`,
+        );
+      } else {
+        hideStatus('br-parse-status');
+      }
     } catch (error) {
       console.error('[batch-role-creator] parseCSVAndFetchOrgs error', error);
       showStatus('br-parse-status', 'error', error.message || 'CSV 解析失敗。');
@@ -854,13 +1182,20 @@
       const rowsHtml = group.users
         .map(
           (user, rIdx) => `
-            <tr class="br-data-row" data-gidx="${gIdx}" data-ridx="${rIdx}" data-code="${_esc(user.code)}">
+            <tr class="br-data-row" data-gidx="${gIdx}" data-ridx="${rIdx}" data-code="${_esc(user.code)}" data-jobtitle="${_esc(user.jobTitle || '')}">
               <td>
                 <div class="person-name">${_esc(user.displayName)}</div>
                 <div class="person-meta">
                   登入帳號：${_esc(user.loginAccount)}<br>
-                  組織：${_esc(user.groupKey)}${user.allOrgs.length > 1 ? `<br><span style="opacity:.65;">（兼任 ${user.allOrgs.length} 個單位）</span>` : ''}
+                  組織：${_esc(user.groupKey)}${user.allOrgs.length > 1 ? `<br><span style="opacity:.65;">（兼任 ${user.allOrgs.length} 個單位）</span>` : ''}<br>
+                  職務：${user.jobTitle
+                    ? `<span class="job-title">${_esc(user.jobTitle)}</span>`
+                    : '<span class="job-title job-title-empty">（後台未設定）</span>'}
+                  ${user.titleFromJob
+                    ? `<span class="job-applied${user.titleGuessExact ? '' : ' job-applied-guess'}">${user.titleGuessExact ? '已帶入 title_level' : '依職務推測，請確認'}</span>`
+                    : ''}
                 </div>
+                <div class="existing-slot" data-gidx="${gIdx}" data-ridx="${rIdx}"></div>
               </td>
               <td>
                 <input
@@ -972,8 +1307,10 @@
                   <option value="全員會簽">全員會簽</option>
                 </select>
               </div>
-              <div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button class="btn btn-primary br-apply-group" data-gidx="${gIdx}">套用全組</button>
+                <button class="btn btn-secondary br-apply-job" data-gidx="${gIdx}" type="button"
+                        title="依 kintone 後台的職務，自動填每一列的 title_level">依職務帶入</button>
               </div>
             </div>
           </div>
@@ -1004,7 +1341,13 @@
       : 'none';
 
     bindGroupRowEvents();
-    _parsedGroups.forEach((_, gIdx) => updateOrgPreview(gIdx));
+    // 標示 685 已有記錄的人員（黃底 + 徽章 + 更新既有下拉）
+    document.querySelectorAll('tr.br-data-row').forEach((tr) =>
+      updateExistingSlot(tr.dataset.gidx, tr.dataset.ridx));
+    _parsedGroups.forEach((_, gIdx) => {
+      updateOrgPreview(gIdx);
+      updateCardStatus(gIdx);
+    });
   }
 
   /** 建立「新增人員」空白列 HTML（人員欄為搜尋輸入框） */
@@ -1023,6 +1366,8 @@
             autocomplete="off"
           >
           <div class="new-row-person-info" data-gidx="${gIdx}" data-ridx="${rId}"></div>
+          <div class="new-row-job person-meta" data-gidx="${gIdx}" data-ridx="${rId}"></div>
+          <div class="existing-slot" data-gidx="${gIdx}" data-ridx="${rId}"></div>
         </td>
         <td>
           <input
@@ -1071,6 +1416,194 @@
     `;
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // 既有角色偵測（已建立且存在 → 醒目標示 + 可改為更新既有記錄）
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** 取某人現有的角色記錄清單（找不到回空陣列） */
+  const getExistingRoles = (code) =>
+    (code && _existingRolesByUser.get(normalize(code))) || [];
+
+  /**
+   * 依 data-code 重繪該列的「既有角色」區塊。
+   * 有既有記錄 → 整列加 row-existing（黃底）、人員名稱旁加徽章、下方出現選擇下拉。
+   * 沒有 → 清空區塊並移除標示（例如新增列把人改成別人時）。
+   */
+  function updateExistingSlot(gIdx, rIdx) {
+    const tr = document.querySelector(`tr.br-data-row[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    const slot = document.querySelector(`.existing-slot[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    if (!tr || !slot) return;
+
+    const list = getExistingRoles(tr.dataset.code);
+
+    if (!list.length) {
+      slot.innerHTML = '';
+      tr.classList.remove('row-existing', 'row-bound');
+      // 只清掉「既有綁定」，本次剛建立的列（preexisting 非 true）不受影響
+      if (tr.dataset.preexisting === 'true') {
+        tr.dataset.preexisting = '';
+        tr.dataset.recordId = '';
+        tr.dataset.signingMode = '';
+        tr.dataset.dirty = '';
+        updateRowStatus(tr, '');
+      }
+      return;
+    }
+
+    tr.classList.add('row-existing');
+
+    const boundId = tr.dataset.preexisting === 'true' ? tr.dataset.recordId : '';
+    const options = [
+      `<option value="">＋ 建立為新角色</option>`,
+      ...list.map((ex) => {
+        const label = `${ex.roleName || ex.roleId || `記錄 ${ex.recordId}`}` +
+          (ex.isActive ? '' : '（已停用）') +
+          (ex.holderCount > 1 ? `／${ex.holderCount} 人共用` : '');
+        return `<option value="${_esc(ex.recordId)}"${ex.recordId === boundId ? ' selected' : ''}>更新既有：${_esc(label)}</option>`;
+      }),
+    ].join('');
+
+    slot.innerHTML = `
+      <div class="existing-picker">
+        <select class="row-existing-select" data-gidx="${gIdx}" data-ridx="${rIdx}">${options}</select>
+        <div class="existing-hint" data-role="existing-hint"></div>
+      </div>
+    `;
+
+    // 名稱旁的徽章（重繪時先移除舊的，避免重複附加）
+    const nameEl = tr.querySelector('.person-name') || tr.querySelector('.new-row-person-info');
+    if (nameEl) {
+      const old = nameEl.querySelector('.badge-exists');
+      if (old) old.remove();
+      nameEl.insertAdjacentHTML(
+        'beforeend',
+        `<span class="badge-exists">已建立 ${list.length} 筆</span>`,
+      );
+    }
+
+    const select = slot.querySelector('.row-existing-select');
+    select.addEventListener('change', () => applyExistingBinding(gIdx, rIdx, select.value));
+
+    refreshExistingHint(tr, list, boundId);
+  }
+
+  /** 更新該列黃字提示與徽章文字，讓「會新增」還是「會更新」一目瞭然 */
+  function refreshExistingHint(tr, list, boundId) {
+    const hintEl = tr.querySelector('[data-role="existing-hint"]');
+    const badge  = tr.querySelector('.badge-exists');
+    const bound  = boundId ? list.find((ex) => ex.recordId === boundId) : null;
+
+    if (bound) {
+      tr.classList.add('row-bound');
+      if (badge) {
+        badge.classList.add('badge-bound');
+        badge.textContent = '更新既有';
+      }
+      if (hintEl) {
+        hintEl.innerHTML =
+          `儲存時會<strong>更新</strong>「${_esc(bound.roleName || bound.roleId)}」這筆記錄，不會新增。` +
+          (bound.holderCount > 1
+            ? `<br><span style="color:#b91c1c;">注意：這筆原本有 ${bound.holderCount} 位簽核者，更新後只會保留這一位。</span>`
+            : '');
+      }
+    } else {
+      tr.classList.remove('row-bound');
+      if (badge) {
+        badge.classList.remove('badge-bound');
+        badge.textContent = `已建立 ${list.length} 筆`;
+      }
+      if (hintEl) {
+        hintEl.innerHTML =
+          `此人已是 ${list.length} 個角色的簽核者：${_esc(list.map((ex) => ex.roleName || ex.roleId).join('、'))}。` +
+          `<br>維持現狀會<strong>另外新增</strong>一筆角色；要改既有的請於上方選取。`;
+      }
+    }
+  }
+
+  /**
+   * 套用/解除「更新既有記錄」的綁定
+   * @param {string} recordId - 空字串表示改回「建立為新角色」
+   */
+  function applyExistingBinding(gIdx, rIdx, recordId) {
+    const tr = document.querySelector(`tr.br-data-row[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    if (!tr) return;
+
+    const list = getExistingRoles(tr.dataset.code);
+    const ex = recordId ? list.find((item) => item.recordId === recordId) : null;
+
+    if (!ex) {
+      tr.dataset.preexisting = '';
+      tr.dataset.recordId = '';
+      tr.dataset.signingMode = '';
+      tr.dataset.dirty = '';
+      updateRowStatus(tr, '');
+    } else {
+      tr.dataset.preexisting = 'true';
+      tr.dataset.recordId = ex.recordId;
+      tr.dataset.dirty = '';
+      // 既有 signing_mode 先記著，避免更新時被卡片預設值默默覆蓋
+      tr.dataset.signingMode = ex.signingMode || '';
+      updateRowStatus(tr, 'saved');
+
+      // 帶入既有值供 HR 就地修改
+      const unitInput = tr.querySelector('.row-unit-select');
+      const titleSelect = tr.querySelector('.row-title-select');
+      const holderTypeSelect = tr.querySelector('.row-holder-type-select');
+      if (unitInput) unitInput.value = ex.unitName;
+      if (titleSelect) titleSelect.value = ex.titleLevel;
+      if (holderTypeSelect && ex.holderType) holderTypeSelect.value = ex.holderType;
+      toggleHolderTarget(gIdx, rIdx);
+    }
+
+    refreshExistingHint(tr, list, ex ? ex.recordId : '');
+    updateSinglePreview(gIdx, rIdx);
+    updateCardStatus(gIdx);
+  }
+
+  /**
+   * 手動新增列：查出該人的職務並顯示，順便自動帶入 title_level（欄位仍為空時才帶）
+   *
+   * 這一列屬於哪張卡片就優先取該組織的職務；該人不屬於此組織時退回第一個組織，
+   * 並在文字上標明是哪個單位的職務，避免誤會。
+   */
+  async function showJobTitleForRow(gIdx, rIdx, code) {
+    const jobDiv = document.querySelector(`.new-row-job[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    if (!jobDiv) return;
+
+    jobDiv.innerHTML = '<span style="opacity:.6;">職務查詢中…</span>';
+
+    const orgs = await fetchUserOrgs(code);
+    // 使用者可能在等待期間又改了人，確認 data-code 仍是同一人才寫入
+    const tr = document.querySelector(`tr.br-data-row[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+    if (!tr || normalize(tr.dataset.code) !== normalize(code)) return;
+
+    const cardOrg = (_parsedGroups[gIdx] && _parsedGroups[gIdx].orgName) || '';
+    const matched = orgs.find((o) => o.name === cardOrg) || orgs[0];
+    const fromOtherOrg = matched && matched.name !== cardOrg;
+
+    tr.dataset.jobtitle = (matched && matched.title) || '';
+
+    const titleSelect = tr.querySelector('.row-title-select');
+    const guessed = guessTitleLevel(matched ? matched.title : '');
+    let appliedHtml = '';
+
+    // 只在 title_level 還沒選時自動帶入，不覆蓋 HR 已經選好的值
+    if (guessed.value && titleSelect && !titleSelect.value) {
+      titleSelect.value = guessed.value;
+      markRowDirty(tr);
+      updateSinglePreview(gIdx, rIdx);
+      appliedHtml = `<span class="job-applied${guessed.exact ? '' : ' job-applied-guess'}">${
+        guessed.exact ? '已帶入 title_level' : '依職務推測，請確認'}</span>`;
+    }
+
+    jobDiv.innerHTML =
+      `職務：${matched && matched.title
+        ? `<span class="job-title">${_esc(matched.title)}</span>`
+        : '<span class="job-title job-title-empty">（後台未設定）</span>'}` +
+      (fromOtherOrg ? `<span style="opacity:.65;">（${_esc(matched.name)}）</span>` : '') +
+      appliedHtml;
+  }
+
   /** 處理人員搜尋輸入：比對 _userDirectory，更新 data-code 及顯示確認/錯誤訊息 */
   function handlePersonSearch(gIdx, rIdx, value) {
     const tr = document.querySelector(`tr.br-data-row[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
@@ -1079,15 +1612,39 @@
 
     if (!_userDirectory) return;
 
+    const jobDiv = document.querySelector(`.new-row-job[data-gidx="${gIdx}"][data-ridx="${rIdx}"]`);
+
     const term = normalize(value);
     if (!term) {
       if (tr) tr.dataset.code = '';
       if (infoDiv) { infoDiv.textContent = ''; infoDiv.style.color = ''; }
+      if (jobDiv) jobDiv.innerHTML = '';
       if (holderPersonEl) holderPersonEl.innerHTML = '<div class="hp-placeholder">（選人後自動填入）</div>';
+      updateExistingSlot(gIdx, rIdx);
       return;
     }
 
-    const user = _userDirectory.byCode.get(term) || _userDirectory.byName.get(term);
+    // 先用登入名稱（唯一鍵）比對；沒中才用姓名，且姓名只認使用中的帳號
+    const byCodeUser = _userDirectory.byCode.get(term);
+    const named = byCodeUser ? null : resolveUserByName(_userDirectory, value);
+    const user = byCodeUser || named?.user || null;
+
+    // 用登入名稱指定到已停用帳號時，明確擋下並指出同名的在職帳號
+    if (byCodeUser && !isActiveUser(byCodeUser)) {
+      const alt = activeSameName(_userDirectory, byCodeUser.name, byCodeUser.code);
+      if (tr) tr.dataset.code = '';
+      if (infoDiv) {
+        infoDiv.style.color = '#e74c3c';
+        infoDiv.textContent =
+          `${byCodeUser.name}（${byCodeUser.code}）已停用，不能設為簽核者` +
+          (alt ? `；請改用「${alt.code}」` : '');
+      }
+      if (jobDiv) jobDiv.innerHTML = '';
+      if (holderPersonEl) holderPersonEl.innerHTML = '<div class="hp-placeholder">（選人後自動填入）</div>';
+      updateExistingSlot(gIdx, rIdx);
+      return;
+    }
+
     if (user) {
       if (tr) tr.dataset.code = user.code;
       if (infoDiv) {
@@ -1098,14 +1655,22 @@
         holderPersonEl.innerHTML =
           `<div class="hp-name">${_esc(user.name)}</div><div class="hp-code">${_esc(user.code)}</div>`;
       }
+      // 職務要打組織 API，非同步補上（有快取，同一人不會重複打）
+      showJobTitleForRow(gIdx, rIdx, user.code).catch((err) =>
+        console.warn('[batch-role-creator] showJobTitleForRow failed', err));
     } else {
       if (tr) tr.dataset.code = '';
       if (infoDiv) {
         infoDiv.style.color = '#e74c3c';
-        infoDiv.textContent = '找不到使用者，請從建議清單選取';
+        // 同名有多個在職帳號、或只剩停用帳號時，resolveUserByName 會給出具體原因
+        infoDiv.textContent = named?.error || '找不到使用者，請從建議清單選取';
       }
+      if (jobDiv) jobDiv.innerHTML = '';
       if (holderPersonEl) holderPersonEl.innerHTML = '<div class="hp-placeholder">（選人後自動填入）</div>';
     }
+
+    // 人選定後才知道是否已有角色，重繪該列的既有角色區塊
+    updateExistingSlot(gIdx, rIdx);
   }
 
   /** 綁定單一列的所有事件（初始列 & 動態新增列共用） */
@@ -1203,6 +1768,11 @@
     // 卡片級：套用全組
     document.querySelectorAll('.br-apply-group').forEach((button) => {
       button.addEventListener('click', (event) => applyBulkToGroup(event.currentTarget.dataset.gidx));
+    });
+
+    // 卡片級：依職務一鍵帶入 title_level
+    document.querySelectorAll('.br-apply-job').forEach((button) => {
+      button.addEventListener('click', (event) => applyJobTitlesToGroup(event.currentTarget.dataset.gidx));
     });
 
     // 卡片級：新增人員列
@@ -1310,11 +1880,55 @@
       const titleSelect = row.querySelector('.row-title-select');
       if (unitSelect && bulkUnit.value) unitSelect.value = bulkUnit.value;
       if (titleSelect && bulkTitle.value) titleSelect.value = bulkTitle.value;
+      // 明確按下「套用全組」＝ HR 要用卡片的 signing_mode，解除既有值的保護
+      row.dataset.signingMode = '';
+      // 已綁定既有記錄的列被改動了，標成待更新
+      markRowDirty(row);
     });
 
     updateOrgPreview(gIdx);
     const button = document.querySelector(`.br-apply-group[data-gidx="${gIdx}"]`);
     if (button) button.textContent = '已套用';
+  }
+
+  /**
+   * 卡片級：依每列的職務一鍵帶入 title_level
+   * 這是明確的手動動作，會覆蓋已選的值；對不到選項的列不動，並在按鈕旁回報結果。
+   */
+  function applyJobTitlesToGroup(gIdx) {
+    const rows = [...document.querySelectorAll(`tr.br-data-row[data-gidx="${gIdx}"]`)];
+    let applied = 0;
+    const unmatched = [];
+
+    rows.forEach((row) => {
+      const titleSelect = row.querySelector('.row-title-select');
+      if (!titleSelect) return;
+
+      const jobTitle = row.dataset.jobtitle || '';
+      const guessed = guessTitleLevel(jobTitle);
+
+      if (guessed.value) {
+        titleSelect.value = guessed.value;
+        markRowDirty(row);
+        applied++;
+      } else {
+        const nameEl = row.querySelector('.person-name');
+        unmatched.push(nameEl ? nameEl.textContent.replace(/已建立.*$|更新既有$/, '').trim()
+                              : (row.dataset.code || '未知'));
+      }
+    });
+
+    updateOrgPreview(gIdx);
+
+    const button = document.querySelector(`.br-apply-job[data-gidx="${gIdx}"]`);
+    if (button) {
+      button.textContent = unmatched.length
+        ? `已帶入 ${applied} 列（${unmatched.length} 列無對應）`
+        : `已帶入 ${applied} 列`;
+      button.title = unmatched.length
+        ? `職務對不到 title_level 選項，請手動選：${unmatched.join('、')}`
+        : '依 kintone 後台的職務，自動填每一列的 title_level';
+    }
   }
 
   function updateOrgPreview(gIdx) {
@@ -1400,6 +2014,18 @@
     if (holderType === HOLDER_TYPE_USER && !code) {
       throw new Error(`「${nameDisplay}」尚未完成人員選取，請從搜尋清單選取使用者。`);
     }
+    // 最後一道保險：寫入 holder_user 前再確認該登入名稱目前是使用中
+    // （避免 CSV 解析後帳號才被停用，或前端狀態殘留）
+    if (holderType === HOLDER_TYPE_USER && _userDirectory) {
+      const user = _userDirectory.byCode.get(normalize(code));
+      if (user && !isActiveUser(user)) {
+        const alt = activeSameName(_userDirectory, user.name, user.code);
+        throw new Error(
+          `「${nameDisplay}」的帳號「${code}」已停用，不能設為簽核者。` +
+          (alt ? `同名的使用中帳號是「${alt.code}」。` : ''),
+        );
+      }
+    }
     if (!unitName) {
       throw new Error(`「${nameDisplay}」的 unit_name 尚未填寫。`);
     }
@@ -1425,11 +2051,13 @@
     const unitName   = unitSelect  ? unitSelect.value.trim()  : '';
     const titleLevel = titleSelect ? titleSelect.value.trim() : '';
 
-    // signing_mode 從卡片批控下拉讀取，預設「任一人簽」
+    // signing_mode：綁定既有記錄的列沿用原值（避免更新時被卡片預設值默默覆蓋），
+    // 其餘（或 HR 按過「套用全組」）才用卡片批控下拉的值
     const signingSelect = gIdx
       ? document.querySelector(`.bulk-signing-select[data-gidx="${gIdx}"]`)
       : null;
-    const signingMode = signingSelect ? signingSelect.value : '任一人簽';
+    const signingMode = row.dataset.signingMode ||
+      (signingSelect ? signingSelect.value : '任一人簽');
 
     // role_name = unit_name_title_level（與預覽欄一致）
     const roleName =
@@ -1471,18 +2099,21 @@
   /**
    * 全部列驗證 + 建構（整批送出用）。
    *
-   * 永遠回傳 { records, skipped }：
-   *   records  — 通過驗證且成功建構的 kintone record 物件陣列（含 role_id）
+   * 永遠回傳 { records, updates, skipped }：
+   *   records  — 要新增的 kintone record 物件陣列（含 role_id）
+   *   updates  — 要更新的既有記錄 [{ id, record }]（列上選了「更新既有」且欄位有改動；
+   *              選了但沒改任何欄位的列不送出，避免無謂覆蓋）
    *   skipped  — 被略過的列，格式 [{ name, reason }]
    *
    * 驗證或建構任一失敗時：
    *   - 略過該列，繼續處理其餘列（不中斷整批）
-   *   - role_id 流水號只計入成功的列，不留空缺
+   *   - role_id 流水號只計入「新增」且成功的列，不留空缺
    */
   function buildRecords(startNum = 1) {
     const rows = [...document.querySelectorAll('tr.br-data-row')];
     const skipped = [];
-    const records  = [];
+    const records = [];
+    const updates = [];
     let seqNum = startNum;
 
     rows.forEach((row) => {
@@ -1499,6 +2130,15 @@
 
       // 步驟 2：建構 record 物件（可能因群組未選等原因拋錯）
       try {
+        if (row.dataset.recordId) {
+          // 已存在的記錄：只有真的被改過（dirty）才更新。
+          // 沒改就不送 PUT，避免把共用同一筆的其他簽核者洗掉。
+          if (row.dataset.dirty === 'true') {
+            updates.push({ id: row.dataset.recordId, record: buildRowRecord(row) });
+          }
+          return;
+        }
+
         const rec = buildRowRecord(row);
         rec.role_id = { value: `ROLE_${String(seqNum++).padStart(4, '0')}` };
         records.push(rec);
@@ -1507,7 +2147,7 @@
       }
     });
 
-    return { records, skipped };
+    return { records, updates, skipped };
   }
 
   /** 更新單列的儲存狀態圖示：'saved' | 'dirty' | '' */
@@ -1527,6 +2167,8 @@
     const savedCount = allRows.filter((tr) => tr.dataset.recordId).length;
     const dirtyCount = allRows.filter((tr) => tr.dataset.dirty === 'true').length;
     const newCount   = total - savedCount;
+    // 匯入前就存在於 685、且被選為「更新既有」的列
+    const boundCount = allRows.filter((tr) => tr.dataset.preexisting === 'true').length;
 
     const statusEl = document.getElementById(`card-status-${gIdx}`);
     const saveBtn  = document.querySelector(`.br-save-card[data-gidx="${gIdx}"]`);
@@ -1537,9 +2179,10 @@
         statusEl.style.color = '#27ae60';
       } else if (savedCount > 0) {
         const parts = [];
-        if (savedCount > 0) parts.push(`${savedCount} 筆已建立`);
-        if (dirtyCount > 0) parts.push(`${dirtyCount} 筆待更新`);
-        if (newCount > 0)   parts.push(`${newCount} 筆未建立`);
+        if (boundCount > 0)             parts.push(`${boundCount} 筆既有（會更新）`);
+        if (savedCount - boundCount > 0) parts.push(`${savedCount - boundCount} 筆已建立`);
+        if (dirtyCount > 0)             parts.push(`${dirtyCount} 筆待更新`);
+        if (newCount > 0)               parts.push(`${newCount} 筆未建立`);
         statusEl.textContent = parts.join('・');
         statusEl.style.color = '#e67e22';
       } else {
@@ -1655,9 +2298,9 @@
     if (btn.disabled) return;
 
     // ① 先做快速驗證（暫用序號 1），確認是否有可送資料
-    const { records: preCheck, skipped: preSkipped } = buildRecords(1);
+    const { records: preCheck, updates: preUpdates, skipped: preSkipped } = buildRecords(1);
 
-    if (!preCheck.length) {
+    if (!preCheck.length && !preUpdates.length) {
       const msg = preSkipped.length
         ? `所有 ${preSkipped.length} 列資料驗證失敗，無可送出的資料。`
         : '目前沒有可送出的資料。';
@@ -1666,7 +2309,11 @@
     }
 
     const skipNote = preSkipped.length ? `\n（${preSkipped.length} 列驗證失敗，將略過）` : '';
-    if (!confirm(`確定要建立 ${preCheck.length} 筆角色記錄嗎？${skipNote}`)) return;
+    const actionNote = [
+      preCheck.length ? `新增 ${preCheck.length} 筆角色記錄` : '',
+      preUpdates.length ? `更新 ${preUpdates.length} 筆既有記錄` : '',
+    ].filter(Boolean).join('、');
+    if (!confirm(`確定要${actionNote}嗎？${skipNote}`)) return;
 
     const statusId = 'br-submit-status';
     btn.disabled = true;
@@ -1685,9 +2332,9 @@
       return;
     }
 
-    const { records, skipped: validationSkipped } = buildRecords(maxNum + 1);
+    const { records, updates, skipped: validationSkipped } = buildRecords(maxNum + 1);
 
-    if (!records.length) {
+    if (!records.length && !updates.length) {
       showStatus(statusId, 'error', '重建記錄時所有列均驗證失敗，無可建立的資料。');
       btn.disabled = false;
       btn.textContent = '建立角色記錄';
@@ -1705,15 +2352,21 @@
 
     const chunkSize = 100;
     let created = 0;
+    let updated = 0;
     /** @type {{ name: string; reason: string }[]} */
     const apiFailed = [];
 
     console.log('[batch-role-creator] submitBatch appId:', appId, '| startNum:', maxNum + 1);
-    console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
+    if (records.length) {
+      console.log('[batch-role-creator] records[0]:', JSON.stringify(records[0], null, 2));
+    }
     showStatus(
       statusId,
       'info',
-      `準備建立 ${records.length} 筆（從 ROLE_${String(maxNum + 1).padStart(4, '0')} 起）${validationSkipped.length ? `，略過 ${validationSkipped.length} 筆驗證失敗` : ''}...`,
+      `準備${records.length ? `新增 ${records.length} 筆（從 ROLE_${String(maxNum + 1).padStart(4, '0')} 起）` : ''}` +
+      `${records.length && updates.length ? '、' : ''}` +
+      `${updates.length ? `更新 ${updates.length} 筆既有記錄` : ''}` +
+      `${validationSkipped.length ? `，略過 ${validationSkipped.length} 筆驗證失敗` : ''}...`,
     );
 
     for (let i = 0; i < records.length; i += chunkSize) {
@@ -1744,6 +2397,34 @@
       }
     }
 
+    // ②-2 更新已存在的記錄（列上選了「更新既有」）；同樣 chunk 失敗就逐筆重試
+    for (let i = 0; i < updates.length; i += chunkSize) {
+      const chunk = updates.slice(i, i + chunkSize);
+      showStatus(statusId, 'info', `更新既有記錄中... ${updated} / ${updates.length}`);
+
+      try {
+        await kintone.api(kintone.api.url('/k/v1/records', true), 'PUT', {
+          app: appId,
+          records: chunk,
+        });
+        updated += chunk.length;
+      } catch (chunkErr) {
+        console.warn('[submitBatch] update chunk failed, retrying one by one:', formatKintoneError(chunkErr));
+        for (const item of chunk) {
+          try {
+            await kintone.api(kintone.api.url('/k/v1/records', true), 'PUT', {
+              app: appId,
+              records: [item],
+            });
+            updated++;
+          } catch (rowErr) {
+            const roleName = (item.record.role_name && item.record.role_name.value) || `記錄 ${item.id}`;
+            apiFailed.push({ name: roleName, reason: `更新失敗：${formatKintoneError(rowErr)}` });
+          }
+        }
+      }
+    }
+
     // ③ 彙整所有跳過清單
     const allSkipped = [
       ...validationSkipped.map((s) => ({ ...s, type: '驗證失敗' })),
@@ -1766,7 +2447,7 @@
       showStatus(
         statusId,
         'info',
-        `完成：${created} 筆建立成功，${allSkipped.length} 筆略過（見下方彈窗）。`,
+        `完成：新增 ${created} 筆、更新 ${updated} 筆，${allSkipped.length} 筆略過（見下方彈窗）。`,
       );
 
       const showSkipped = typeof Swal !== 'undefined' && typeof Swal.fire === 'function'
@@ -1800,7 +2481,11 @@
       btn.textContent = '建立角色記錄';
     } else {
       // 全部成功 → 自動重整
-      showStatus(statusId, 'success', `建立完成，共新增 ${created} 筆角色記錄。畫面即將重新整理。`);
+      showStatus(
+        statusId,
+        'success',
+        `完成，共新增 ${created} 筆${updated ? `、更新 ${updated} 筆既有` : ''}角色記錄。畫面即將重新整理。`,
+      );
       btn.textContent = '建立完成';
       setTimeout(() => location.reload(), 1500);
     }
