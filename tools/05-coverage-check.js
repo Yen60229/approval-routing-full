@@ -1164,6 +1164,33 @@
       .map(([unit, items]) => ({ unit, items }));
   };
 
+  /**
+   * 執行一次批量寫入動作，統一處理「轉圈中／成功／失敗」三種狀態。
+   *
+   * 寫入是分批送出的（CONFIG.WRITE_BATCH），半途失敗代表前面幾批已經寫進 kintone 了，
+   * 所以無論成功或失敗都要呼叫 rescan()，讓報告反映寫入後的真實狀態，
+   * 而不是讓使用者看到過期的清單。
+   *
+   * @param {object} opts
+   * @param {string} opts.loadingTitle 轉圈視窗標題，如「建立中…」
+   * @param {() => Promise<any>} opts.write 實際寫入呼叫；回傳值會傳給 buildSuccessOptions
+   * @param {(result: any) => object} opts.buildSuccessOptions 依寫入結果組出 Swal.fire 的成功選項
+   * @param {() => void} opts.rescan 重新掃描、刷新報告
+   */
+  const runWriteAction = async ({ loadingTitle, write, buildSuccessOptions, rescan }) => {
+    Swal.fire({ title: loadingTitle, allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    try {
+      const result = await write();
+      await Swal.fire(buildSuccessOptions(result));
+    } catch (err) {
+      console.error('[ApprovalRouting] 涵蓋率檢查寫入失敗', err);
+      Swal.close();
+      await showWarning('寫入失敗', `${err.message}，部分可能已經寫入，請重新掃描確認目前狀態。`);
+    } finally {
+      rescan(); // 不論成功或失敗都要刷新，失敗時更需要看到部分寫入後的真實狀態
+    }
+  };
+
   /** 顯示報告覆蓋層 */
   const showReport = (model, rescan) => {
     document.getElementById(CONFIG.OVERLAY_ID)?.remove();
@@ -1217,14 +1244,16 @@
         })).isConfirmed;
         if (!ok) return;
 
-        Swal.fire({ title: '建立中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const created = await createEntriesFromPairs(pairs);
-        await Swal.fire({
-          icon: 'success',
-          title: `已建立 ${created} 筆起點設定`,
-          timer: 2000, showConfirmButton: false,
+        await runWriteAction({
+          loadingTitle: '建立中…',
+          write: () => createEntriesFromPairs(pairs),
+          buildSuccessOptions: (created) => ({
+            icon: 'success',
+            title: `已建立 ${created} 筆起點設定`,
+            timer: 2000, showConfirmButton: false,
+          }),
+          rescan,
         });
-        rescan(); // 重新掃描刷新報告
       },
       onExport: (rows) => exportCsv(rows, `未設定起點_${new Date().toISOString().slice(0, 10)}.csv`),
     });
@@ -1262,14 +1291,16 @@
         })).isConfirmed;
         if (!ok) return;
 
-        Swal.fire({ title: '寫入中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const created = await createHolderRoles(codes, roleName, model.roles);
-        await Swal.fire({
-          icon: 'success',
-          title: `已新增 ${created} 筆「${roleName}」`,
-          timer: 2200, showConfirmButton: false,
+        await runWriteAction({
+          loadingTitle: '寫入中…',
+          write: () => createHolderRoles(codes, roleName, model.roles),
+          buildSuccessOptions: (created) => ({
+            icon: 'success',
+            title: `已新增 ${created} 筆「${roleName}」`,
+            timer: 2200, showConfirmButton: false,
+          }),
+          rescan,
         });
-        rescan();
       },
       onExport: (rows) => exportCsv(rows, `不具簽核身分_${new Date().toISOString().slice(0, 10)}.csv`),
     });
@@ -1291,10 +1322,14 @@
         })).isConfirmed;
         if (!ok) return;
 
-        Swal.fire({ title: '停用中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        await deactivateEntries(recordIds);
-        await Swal.fire({ icon: 'success', title: `已停用 ${recordIds.length} 筆起點設定`, timer: 1800, showConfirmButton: false });
-        rescan();
+        await runWriteAction({
+          loadingTitle: '停用中…',
+          write: () => deactivateEntries(recordIds),
+          buildSuccessOptions: () => ({
+            icon: 'success', title: `已停用 ${recordIds.length} 筆起點設定`, timer: 1800, showConfirmButton: false,
+          }),
+          rescan,
+        });
       },
       onExport: (rows) => exportCsv(rows, `已停用仍有起點_${new Date().toISOString().slice(0, 10)}.csv`),
     });
@@ -1330,10 +1365,14 @@
         })).isConfirmed;
         if (!ok) return;
 
-        Swal.fire({ title: '停用中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        await deactivateRoles(updates);
-        await Swal.fire({ icon: 'success', title: `已停用 ${updates.length} 筆角色記錄`, timer: 2000, showConfirmButton: false });
-        rescan();
+        await runWriteAction({
+          loadingTitle: '停用中…',
+          write: () => deactivateRoles(updates),
+          buildSuccessOptions: () => ({
+            icon: 'success', title: `已停用 ${updates.length} 筆角色記錄`, timer: 2000, showConfirmButton: false,
+          }),
+          rescan,
+        });
       },
       onExport: (rows) => exportCsv(rows, `已停用仍是簽核者_${new Date().toISOString().slice(0, 10)}.csv`, { group: '擔任角色' }),
     });
@@ -1379,13 +1418,17 @@
         })).isConfirmed;
         if (!ok) return;
 
-        Swal.fire({ title: '停用中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        await deactivateRoles(targets.map((r) => ({
-          id: r.recordId,
-          record: { [RF.IS_ACTIVE]: { value: [] } },
-        })));
-        await Swal.fire({ icon: 'success', title: `已停用 ${targets.length} 筆角色`, timer: 1800, showConfirmButton: false });
-        rescan();
+        await runWriteAction({
+          loadingTitle: '停用中…',
+          write: () => deactivateRoles(targets.map((r) => ({
+            id: r.recordId,
+            record: { [RF.IS_ACTIVE]: { value: [] } },
+          }))),
+          buildSuccessOptions: () => ({
+            icon: 'success', title: `已停用 ${targets.length} 筆角色`, timer: 1800, showConfirmButton: false,
+          }),
+          rescan,
+        });
       },
       onExport: (rows) => exportCsv(
         rows,
