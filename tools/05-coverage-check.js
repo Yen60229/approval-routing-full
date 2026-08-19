@@ -912,6 +912,222 @@
     };
   };
 
+  /**
+   * A 分頁：未設定起點（依「單位＋職稱」分組，可跨多個單位一次建立）
+   *
+   * 主表一組一列，自動配到的角色先帶入，配不到的整列標紅且勾不動；
+   * 兼任多單位／多職稱／資料不全者另立一區逐人手選。
+   *
+   * DOM 只建一次，搜尋與篩選僅切換每列的 display——整個重建會把使用者
+   * 已經挑好的角色一起洗掉。
+   */
+  const buildEntryTab = ({ users, roles, roleOptions, onAction, onExport }) => {
+    const { groups, exceptions } = groupNoEntryUsers(users);
+
+    const rows = [
+      ...groups.map((g) => ({
+        id: `g:${g.key}`, isException: false,
+        unit: g.unit, title: g.title, members: g.members,
+        match: matchEntryRole(g.unit, g.title, roles),
+      })),
+      ...exceptions.map((u) => ({
+        id: `u:${u.code}`, isException: true,
+        unit: (u.units || []).join('、'), title: u.jobTitle || '', members: [u],
+        match: null,   // 單位／職稱本來就不明確，不做自動配對
+      })),
+    ];
+
+    const root = document.createElement('div');
+    root.style.cssText = 'display:flex; flex-direction:column; height:100%;';
+
+    // ── 工具列（分組後列數已大幅減少，不再需要單位篩選下拉）──
+    const toolbar = document.createElement('div');
+    toolbar.style.cssText = 'display:flex; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap;';
+    toolbar.innerHTML = `
+      <input data-role="search" type="text" placeholder="搜尋單位、職稱、姓名或帳號…"
+             style="font-size:14px; padding:6px 10px; border:1px solid #ccc; border-radius:4px; min-width:240px;">
+      <label style="font-size:14px;"><input type="checkbox" data-role="only-unset"> 只看尚未指定</label>
+      <label style="font-size:14px;"><input type="checkbox" data-role="check-all"> 全選（目前顯示且已指定）</label>
+      <span data-role="count" style="font-size:13px; color:#666; margin-left:auto;"></span>
+    `;
+
+    // ── 表格 ──
+    const listWrap = document.createElement('div');
+    listWrap.style.cssText = 'flex:1; overflow-y:auto; border:1px solid #e0e0e0; border-radius:6px;';
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%; border-collapse:collapse; font-size:14px;';
+    table.innerHTML = `
+      <thead>
+        <tr style="background:#f5f5f5; position:sticky; top:0; z-index:2;">
+          <th style="padding:8px; width:36px;"></th>
+          <th style="padding:8px; text-align:left;">單位</th>
+          <th style="padding:8px; text-align:left;">職稱</th>
+          <th style="padding:8px; text-align:right; width:64px;">人數</th>
+          <th style="padding:8px; text-align:left;">起點角色</th>
+        </tr>
+      </thead>
+      <tbody></tbody>`;
+    listWrap.appendChild(table);
+    const tbody = table.querySelector('tbody');
+
+    // ── 底部動作列 ──
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex; gap:12px; align-items:center; margin-top:12px; flex-wrap:wrap;';
+    const actionBtn = document.createElement('button');
+    actionBtn.style.cssText =
+      'font-size:15px; padding:10px 24px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;';
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = '匯出 CSV';
+    exportBtn.style.cssText =
+      'font-size:14px; padding:10px 18px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer; margin-left:auto;';
+
+    const state = new Map();   // row.id → { row, tr, combo, cb }
+    let dividerTr = null;
+
+    /** 依搜尋與篩選切換每列顯示，並更新計數與按鈕狀態 */
+    const refresh = () => {
+      const kw = toolbar.querySelector('[data-role="search"]').value.trim();
+      const onlyUnset = toolbar.querySelector('[data-role="only-unset"]').checked;
+
+      let assigned = 0;
+      let pickedRows = 0;
+      let pickedPeople = 0;
+      let exceptionVisible = false;
+
+      for (const s of state.values()) {
+        const hasRole = Boolean(s.combo.getValue());
+        if (hasRole) assigned += 1;
+
+        // 沒指定角色就勾不動，不可能送出不完整的資料
+        s.cb.disabled = !hasRole;
+        if (!hasRole && s.cb.checked) s.cb.checked = false;
+        s.tr.style.background = hasRole ? '' : '#fdecea';
+
+        const haystack = [s.row.unit, s.row.title,
+          ...s.row.members.map((m) => `${m.name} ${m.code}`)].join(' ');
+        const show = (!kw || haystack.includes(kw)) && (!onlyUnset || !hasRole);
+        s.tr.style.display = show ? '' : 'none';
+        if (show && s.row.isException) exceptionVisible = true;
+
+        if (s.cb.checked) {
+          pickedRows += 1;
+          pickedPeople += s.row.members.length;
+        }
+      }
+
+      if (dividerTr) dividerTr.style.display = exceptionVisible ? '' : 'none';
+
+      toolbar.querySelector('[data-role="count"]').textContent =
+        `已指定 ${assigned}/${state.size} 列・已勾選 ${pickedRows} 列（${pickedPeople} 人）`;
+      actionBtn.textContent = pickedPeople
+        ? `一次建立 ${pickedPeople} 筆起點設定`
+        : '一次建立起點設定';
+      actionBtn.disabled = pickedRows === 0;
+      actionBtn.style.opacity = actionBtn.disabled ? '0.5' : '1';
+    };
+
+    /** 例外區的分隔標題列 */
+    const appendDivider = (text) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        `<td colspan="5" style="padding:8px 10px; background:#f7f9fc; border-top:1px solid #e5e7eb; font-size:13px; font-weight:700; color:#555;">${esc(text)}</td>`;
+      tbody.appendChild(tr);
+      return tr;
+    };
+
+    const appendRow = (row) => {
+      const tr = document.createElement('tr');
+      tr.style.borderTop = '1px solid #eee';
+
+      const tdCheck = document.createElement('td');
+      tdCheck.style.cssText = 'padding:6px 8px; text-align:center;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.addEventListener('change', () => refresh());
+      tdCheck.appendChild(cb);
+
+      const tdUnit = document.createElement('td');
+      tdUnit.style.cssText = 'padding:6px 8px;';
+      tdUnit.textContent = row.unit || '—';
+
+      const tdTitle = document.createElement('td');
+      tdTitle.style.cssText = 'padding:6px 8px;';
+      tdTitle.innerHTML = row.title
+        ? `<span style="display:inline-block; padding:1px 8px; border-radius:4px; background:#eef2ff; border:1px solid #c7d2fe; color:#3730a3; font-weight:600;">${esc(row.title)}</span>`
+        : '<span style="color:#bbb;">—</span>';
+
+      const tdCount = document.createElement('td');
+      tdCount.style.cssText = 'padding:6px 8px; text-align:right;';
+      tdCount.textContent = String(row.members.length);
+      // 滑過去看得到這組是誰，送出前可以確認
+      tdCount.title = row.members.map((m) => `${m.name}（${m.code}）`).join('\n');
+
+      const tdRole = document.createElement('td');
+      tdRole.style.cssText = 'padding:6px 8px;';
+      const combo = buildRoleCombo(roleOptions, () => refresh(), { openUp: false, minWidth: '260px' });
+      if (row.match) combo.setValue(row.match.roleId);
+      tdRole.appendChild(combo.el);
+
+      // 同名記錄的下一關不一致，起點指到哪一筆會走出不同的鏈
+      if (row.match && !row.match.nextConsistent) {
+        const warn = document.createElement('div');
+        warn.textContent = '同名角色的下一關設定不一致，建議先用「批次設定下一關」統一';
+        warn.style.cssText = 'margin-top:4px; font-size:12px; color:#92400e;';
+        tdRole.appendChild(warn);
+      }
+
+      tr.append(tdCheck, tdUnit, tdTitle, tdCount, tdRole);
+      tbody.appendChild(tr);
+      state.set(row.id, { row, tr, combo, cb });
+    };
+
+    rows.filter((r) => !r.isException).forEach(appendRow);
+    const exceptionRows = rows.filter((r) => r.isException);
+    if (exceptionRows.length) {
+      dividerTr = appendDivider(
+        `兼任多單位／多職稱／資料不全（${exceptionRows.length} 人）— 請逐人指定`);
+      exceptionRows.forEach(appendRow);
+    }
+    if (!rows.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="5" style="padding:16px; color:#999; text-align:center;">沒有未設定起點的人員</td></tr>';
+    }
+
+    toolbar.querySelector('[data-role="search"]').addEventListener('input', refresh);
+    toolbar.querySelector('[data-role="only-unset"]').addEventListener('change', refresh);
+    toolbar.querySelector('[data-role="check-all"]').addEventListener('change', (e) => {
+      for (const s of state.values()) {
+        if (s.tr.style.display === 'none' || s.cb.disabled) continue;
+        s.cb.checked = e.target.checked;
+      }
+      refresh();
+    });
+
+    actionBtn.addEventListener('click', () => {
+      const pairs = [];
+      for (const s of state.values()) {
+        const roleId = s.combo.getValue();
+        if (!s.cb.checked || !roleId) continue;
+        for (const m of s.row.members) pairs.push({ code: m.code, roleId });
+      }
+      const skipped = [...state.values()].filter((s) => !s.combo.getValue()).length;
+      onAction(pairs, skipped);
+    });
+
+    exportBtn.addEventListener('click', () => {
+      const members = [...state.values()]
+        .filter((s) => s.tr.style.display !== 'none')
+        .flatMap((s) => s.row.members);
+      onExport(members);
+    });
+
+    footer.append(actionBtn, exportBtn);
+    root.append(toolbar, listWrap, footer);
+    root.dataset.tab = 'A';
+    refresh();
+    return root;
+  };
+
   /** 由角色清單組出選擇器選項（依單位分組、同名去重；filter 可再限縮類型） */
   const buildRoleOptions = (roles, { userTypeOnly = false, valueBy = 'roleId' } = {}) => {
     const seen = new Set();
