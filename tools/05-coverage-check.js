@@ -837,6 +837,43 @@
     return root;
   };
 
+  /**
+   * A 區人員分流：能明確歸到「單位＋職稱」的走分組，其餘走例外區
+   *
+   * 同單位同職稱的人起點角色必然相同，所以分組後一組只要選一次角色。
+   * 兼任多單位、職稱有多個、沒有職稱、或單位是「（未分類）」的人無法歸類，
+   * 一律進例外區逐人手選——把他們硬綁成一組，會逼 HR 給不同狀況的人同一個起點。
+   *
+   * 兩邊互斥，同一個人只會出現在其中一列，這是「不會建出兩筆起點」的第一道保險。
+   *
+   * @param {Array} users - A 區人員，需含 code / name / jobTitle / units
+   * @returns {{groups: Array<{key, unit, title, members}>, exceptions: Array}}
+   */
+  const groupNoEntryUsers = (users) => {
+    const map = new Map();
+    const exceptions = [];
+
+    for (const u of users) {
+      const units = u.units || [];
+      const title = (u.jobTitle || '').trim();
+      const unit = units[0] || '';
+      // 職稱以「、」串接多個時，代表這人身兼數職，同樣無法機械式歸類
+      if (units.length !== 1 || unit === UNGROUPED_LABEL || !title || title.includes('、')) {
+        exceptions.push(u);
+        continue;
+      }
+      // \u0000 不可能出現在單位或職稱裡，拿來當組合鍵的分隔字元最安全
+      const key = `${unit}\u0000${title}`;
+      if (!map.has(key)) map.set(key, { key, unit, title, members: [] });
+      map.get(key).members.push(u);
+    }
+
+    const groups = [...map.values()].sort((a, b) =>
+      a.unit.localeCompare(b.unit, 'zh-Hant') || a.title.localeCompare(b.title, 'zh-Hant'));
+    exceptions.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-Hant'));
+    return { groups, exceptions };
+  };
+
   /** 由角色清單組出選擇器選項（依單位分組、同名去重；filter 可再限縮類型） */
   const buildRoleOptions = (roles, { userTypeOnly = false, valueBy = 'roleId' } = {}) => {
     const seen = new Set();
@@ -1156,7 +1193,7 @@
   };
 
   // 單元測試用的出口；瀏覽器端不依賴它，不影響任何行為
-  window.ApprovalRouting.CoverageInternals = Object.freeze({});
+  window.ApprovalRouting.CoverageInternals = Object.freeze({ groupNoEntryUsers });
 
   kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
     if (document.getElementById(CONFIG.BTN_ID)) return event;
