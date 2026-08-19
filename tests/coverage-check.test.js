@@ -91,3 +91,46 @@ describe('groupNoEntryUsers', () => {
     expect(new Set(codes).size).toBe(users.length);
   });
 });
+
+const mkRole = (recordId, roleId, roleName, unitName, titleLevel, nextRoleId = '') =>
+  ({ recordId, roleId, roleName, unitName, titleLevel, nextRoleId,
+     holderType: '指定個人', holderUsers: [] });
+
+describe('matchEntryRole', () => {
+  const roles = [
+    mkRole('430', 'ROLE_0430', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('425', 'ROLE_0425', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('500', 'ROLE_0500', '海運貨物－課長', '海運貨物', '課長', 'ROLE_0200'),
+  ];
+
+  it('單位與職稱都相符時回傳該角色', () => {
+    const m = Internals().matchEntryRole('海運貨物', '課長', roles);
+    expect(m.roleId).toBe('ROLE_0500');
+    expect(m.roleName).toBe('海運貨物－課長');
+  });
+
+  it('同名角色有多筆時取記錄編號最小者', () => {
+    const m = Internals().matchEntryRole('海運貨物', '課員', roles);
+    expect(m.roleId).toBe('ROLE_0425');
+  });
+
+  it('找不到對應角色時回傳 null', () => {
+    expect(Internals().matchEntryRole('資訊部', '專員', roles)).toBeNull();
+  });
+
+  it('單位相符但職稱不符時回傳 null', () => {
+    expect(Internals().matchEntryRole('海運貨物', '專員', roles)).toBeNull();
+  });
+
+  it('同名記錄的下一關一致時 nextConsistent 為 true', () => {
+    expect(Internals().matchEntryRole('海運貨物', '課員', roles).nextConsistent).toBe(true);
+  });
+
+  it('同名記錄的下一關不一致時 nextConsistent 為 false', () => {
+    const messy = [
+      mkRole('425', 'ROLE_0425', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+      mkRole('430', 'ROLE_0430', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0999'),
+    ];
+    expect(Internals().matchEntryRole('海運貨物', '課員', messy).nextConsistent).toBe(false);
+  });
+});

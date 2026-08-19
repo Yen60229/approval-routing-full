@@ -874,6 +874,33 @@
     return { groups, exceptions };
   };
 
+  /**
+   * 依「單位＋職稱」在啟用角色裡找對應的起點角色
+   *
+   * 直接比 unit_name / title_level 兩個欄位，不去拆 role_name 字串——
+   * role_name 是這兩欄組出來的計算欄位，比原始欄位才不會被分隔符號綁死。
+   *
+   * 同名角色有多筆是正常的（一筆記錄只掛一個人），固定取記錄編號最小者，
+   * 讓每次執行的結果一致。
+   *
+   * @returns {{roleId, roleName, nextConsistent}|null} 配不到時回 null
+   */
+  const matchEntryRole = (unit, title, roles) => {
+    const hits = roles
+      .filter((r) => r.unitName === unit && r.titleLevel === title)
+      .sort((a, b) => Number(a.recordId) - Number(b.recordId));
+    if (!hits.length) return null;
+
+    const picked = hits[0];
+    const sameName = roles.filter((r) => r.roleName === picked.roleName);
+    return {
+      roleId: picked.roleId,
+      roleName: picked.roleName,
+      // 同名記錄的下一關不一致時，起點指到哪一筆會走出不同的鏈，要提醒 HR
+      nextConsistent: new Set(sameName.map((r) => r.nextRoleId)).size <= 1,
+    };
+  };
+
   /** 由角色清單組出選擇器選項（依單位分組、同名去重；filter 可再限縮類型） */
   const buildRoleOptions = (roles, { userTypeOnly = false, valueBy = 'roleId' } = {}) => {
     const seen = new Set();
@@ -1193,7 +1220,7 @@
   };
 
   // 單元測試用的出口；瀏覽器端不依賴它，不影響任何行為
-  window.ApprovalRouting.CoverageInternals = Object.freeze({ groupNoEntryUsers });
+  window.ApprovalRouting.CoverageInternals = Object.freeze({ groupNoEntryUsers, matchEntryRole });
 
   kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
     if (document.getElementById(CONFIG.BTN_ID)) return event;
