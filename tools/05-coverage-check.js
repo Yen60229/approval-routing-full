@@ -382,18 +382,30 @@
   // 寫入動作
   // ═══════════════════════════════════════════════════════════════════
 
-  /** A 區：批量建立 686 起點記錄 */
-  const createEntries = async (userCodes, roleId) => {
-    for (const part of chunk(userCodes, CONFIG.WRITE_BATCH)) {
+  /**
+   * A 區：依 {code, roleId} 清單批量建立 686 起點記錄
+   *
+   * 每個人的起點角色可以不同，所以一次能跨多個單位建立。
+   */
+  const createEntriesFromPairs = async (pairs) => {
+    // 分區已經互斥，這裡再對帳號去重一次當保險——686 是一人一筆起點，
+    // 同一個人建出兩筆，之後查起點取到哪一筆就變成看運氣
+    const byCode = new Map();
+    for (const p of pairs) if (!byCode.has(p.code)) byCode.set(p.code, p.roleId);
+
+    const records = [...byCode.entries()].map(([code, roleId]) => ({
+      [EF.EMPLOYEE]:      { value: [{ code }] },
+      [EF.ENTRY_ROLE_ID]: { value: roleId },
+      [EF.IS_ACTIVE]:     { value: [CHECKBOX.ACTIVE] },
+    }));
+
+    for (const part of chunk(records, CONFIG.WRITE_BATCH)) {
       await kintoneApi('/k/v1/records', 'POST', {
         app: APP_ID.EMPLOYEE_ENTRY,
-        records: part.map((code) => ({
-          [EF.EMPLOYEE]:      { value: [{ code }] },
-          [EF.ENTRY_ROLE_ID]: { value: roleId },
-          [EF.IS_ACTIVE]:     { value: [CHECKBOX.ACTIVE] },
-        })),
+        records: part,
       });
     }
+    return records.length;
   };
 
   /**
@@ -1182,24 +1194,36 @@
     panel.querySelector('[data-role="close"]').addEventListener('click', () => overlay.remove());
 
     // ── A 分頁：未設定起點 ──
-    const tabA = buildTab({
-      key: 'A',
+    const tabA = buildEntryTab({
       users: model.noEntry,
+      roles: model.roles,
       roleOptions: buildRoleOptions(model.roles, { valueBy: 'roleId' }),
-      actionLabel: '建立起點設定',
-      onAction: async (codes, roleId, roleLabel) => {
-        if (!codes.length || !roleId) return;
+      onAction: async (pairs, skipped) => {
+        if (!pairs.length) return;
+        const people = new Set(pairs.map((p) => p.code)).size;
+
         const ok = (await Swal.fire({
           icon: 'question',
-          title: `建立 ${codes.length} 筆起點設定？`,
-          html: `起點角色：<strong>${esc(roleLabel)}</strong><br>對象：${codes.length} 人`,
+          title: `建立 ${people} 筆起點設定？`,
+          html:
+            `<div style="text-align:left;">` +
+            `這批涵蓋 <strong>${people}</strong> 位同仁，每人各建一筆，同一個人不會重複建立。` +
+            (skipped
+              ? `<br><span style="color:#92400e;">另有 ${skipped} 列還沒指定起點角色，這次會略過。</span>`
+              : '') +
+            `</div>`,
+          width: '560px',
           showCancelButton: true, confirmButtonText: '確定建立', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
 
         Swal.fire({ title: '建立中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        await createEntries(codes, roleId);
-        await Swal.fire({ icon: 'success', title: `已建立 ${codes.length} 筆起點設定`, timer: 1800, showConfirmButton: false });
+        const created = await createEntriesFromPairs(pairs);
+        await Swal.fire({
+          icon: 'success',
+          title: `已建立 ${created} 筆起點設定`,
+          timer: 2000, showConfirmButton: false,
+        });
         rescan(); // 重新掃描刷新報告
       },
       onExport: (rows) => exportCsv(rows, `未設定起點_${new Date().toISOString().slice(0, 10)}.csv`),
