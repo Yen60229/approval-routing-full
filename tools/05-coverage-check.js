@@ -1039,7 +1039,7 @@
     exportBtn.style.cssText =
       'font-size:14px; padding:10px 18px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer; margin-left:auto;';
 
-    const state = new Map();   // row.id → { row, tr, combo, cb }
+    const state = new Map();   // row.id → { row, tr, combo, cb, warn }
     let dividerTr = null;
 
     /** 依搜尋與篩選切換每列顯示，並更新計數與按鈕狀態 */
@@ -1326,12 +1326,14 @@
           `${esc(g.label)} → <strong>${esc(g.roleLabel)}</strong>（${g.count} 人）</div>`,
         ).join('');
 
+        // 已指定卻沒勾的列是「差一步就好了」，最容易被漏掉，用較重的顏色；
+        // 還沒指定角色的列本來就不可能送出，講一聲就好
         const readyNote = readyRows
-          ? `<div style="margin-top:8px; color:#92400e;">另有 <strong>${readyRows}</strong> 列（${readyPeople} 人）` +
+          ? `<div style="margin-top:10px; color:#92400e; font-weight:600;">另有 <strong>${readyRows}</strong> 列（${readyPeople} 人）` +
             `已經指定角色但沒有勾選，這次<strong>不會建立</strong>，留在清單裡等下次處理。</div>`
           : '';
         const unassignedNote = unassignedRows
-          ? `<div style="margin-top:4px; color:#92400e;">另有 ${unassignedRows} 列還沒指定起點角色，這次會略過。</div>`
+          ? `<div style="margin-top:6px; color:#777;">另有 ${unassignedRows} 列還沒指定起點角色，這次會略過。</div>`
           : '';
 
         const ok = (await Swal.fire({
@@ -1339,7 +1341,8 @@
           title: `建立 ${groupCount} 組／${peopleCount} 人的起點設定？`,
           html:
             `<div style="text-align:left;">` +
-            `<div style="max-height:220px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:6px; padding:4px 10px; font-size:13px;">${listHtml}</div>` +
+            `<div style="margin-bottom:8px;">以下每組各建立一筆起點設定，同一個人不會重複建立：</div>` +
+            `<div style="max-height:220px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:6px; padding:4px 10px; font-size:14px;">${listHtml}</div>` +
             readyNote + unassignedNote +
             `</div>`,
           width: '620px',
@@ -1638,7 +1641,7 @@
       } catch (err) {
         console.error('[ApprovalRouting] 涵蓋率檢查錯誤', err);
         Swal.close();
-        await showWarning('掃描失敗', err.message);
+        await showWarning('掃描失敗', err?.message || String(err));
       }
     });
 
