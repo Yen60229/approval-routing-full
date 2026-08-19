@@ -134,3 +134,27 @@ describe('matchEntryRole', () => {
     expect(Internals().matchEntryRole('海運貨物', '課員', messy).nextConsistent).toBe(false);
   });
 });
+
+describe('isNextRoleConsistent', () => {
+  const roles = [
+    mkRole('430', 'ROLE_0430', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('425', 'ROLE_0425', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('500', 'ROLE_0500', '海運貨物－課長', '海運貨物', '課長', 'ROLE_0200'),
+  ];
+
+  it('依 roleId 找到角色、同名記錄下一關一致時回 true', () => {
+    expect(Internals().isNextRoleConsistent('ROLE_0430', roles)).toBe(true);
+  });
+
+  it('同名記錄下一關不一致時回 false（不限定從哪一筆同名記錄的 roleId 查）', () => {
+    const messy = [
+      mkRole('425', 'ROLE_0425', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+      mkRole('430', 'ROLE_0430', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0999'),
+    ];
+    expect(Internals().isNextRoleConsistent('ROLE_0430', messy)).toBe(false);
+  });
+
+  it('找不到對應 roleId 時回 null（呼叫端視為不顯示警告）', () => {
+    expect(Internals().isNextRoleConsistent('ROLE_9999', roles)).toBeNull();
+  });
+});

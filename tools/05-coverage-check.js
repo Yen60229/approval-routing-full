@@ -71,6 +71,16 @@
  *                             try/catch/finally：失敗一律關轉圈、跳錯誤並明講「部分可能
  *                             已經寫入，請重新掃描確認」，rescan() 在成功／失敗都會跑；
  *                             既有成功訊息文案、icon、timer 秒數不變
+ *   2026-08-19  Jimmy/Claude  最終審查修正：A 分頁確認視窗補上「幾組／幾人」與逐列
+ *                             單位－職稱→角色明細，並提示「已指定但未勾選」的列數，
+ *                             避免捲軸外的勾選被靜默漏送；runWriteAction 的 rescan()
+ *                             補上 await + try/catch，避免重新掃描失敗時轉圈永遠不關；
+ *                             下一關不一致的警告改跟著下拉目前值即時判斷（抽出
+ *                             isNextRoleConsistent 共用），不再只在自動配對當下判斷一次
+ *                             就定死；err.message 一律改用 err?.message || String(err)；
+ *                             buildRoleCombo.setValue 找不到對應選項時 console.warn；
+ *                             例外區分隔列補充說明紅底代表「尚未指定」而非配對失敗；
+ *                             更新過期的 JSDoc（openUp 方向、buildTab 適用分頁）
  */
 (() => {
   'use strict';
@@ -575,13 +585,16 @@
    * 可輸入搜尋的角色選擇器（取代原生 select）
    *
    * 角色多達數十筆時，用原生下拉逐一往下找很花眼力；改為打字即時過濾，
-   * 並支援 ↑↓ 移動、Enter 選取、Esc 取消。清單向「上」展開，
-   * 因為選擇器位在報告視窗底部，往下開會被裁切。
+   * 並支援 ↑↓ 移動、Enter 選取、Esc 取消。清單預設向「上」展開（openUp 參數控制），
+   * 原本是給報告視窗底部的 B～F 分頁用、避免被視窗下緣裁切；A 分頁每一列都在表格中間，
+   * 改由呼叫端傳 openUp: false 向下展開。
    *
    * @param {Array<{unit: string, items: Array<{value: string, label: string}>}>} groups
    *        依單位分組的選項（與原 optgroup 結構相同）
    * @param {Function} onChange - 選取值變動時回呼（用來更新執行按鈕的啟用狀態）
-   * @returns {{el: HTMLElement, getValue: Function, getLabel: Function}}
+   * @param {{openUp?: boolean, minWidth?: string}} [opts]
+   * @returns {{el: HTMLElement, getValue: Function, getLabel: Function, setValue: Function}}
+   *   setValue：由外部指定選取值（自動配對帶入用），找不到對應選項時視為未選取並 console.warn
    */
   const buildRoleCombo = (groups, onChange, { openUp = true, minWidth = '300px' } = {}) => {
     const options = groups.flatMap((g) => g.items.map((it) => ({ ...it, unit: g.unit })));
@@ -731,6 +744,11 @@
        */
       setValue: (value) => {
         const o = options.find((x) => x.value === value);
+        if (!o && value) {
+          // 找不到對應選項時畫面上跟「真的沒有角色可配」長得一模一樣（紅底、勾不動），
+          // HR 分不出是資料真的缺角色，還是傳進來的值本身就是錯的，留一筆可查的線索
+          console.warn('[ApprovalRouting] buildRoleCombo.setValue 找不到對應選項', value);
+        }
         selected = o ? { value: o.value, label: o.label } : null;
         input.value = selected?.label || '';
       },
@@ -738,10 +756,10 @@
   };
 
   /**
-   * 渲染單一分頁（A～E 共用）：工具列（第三欄篩選 + 搜尋 + 全選）、
-   * 人員表格、底部動作列（角色選擇〔選配〕 + 執行按鈕 + 匯出 CSV）
-   * @param {string} groupLabel  - 第三欄標題（A/B/C 用「單位」、D 用「擔任角色」、
-   *                               E 用「狀態／單位」），資料一律放在 users[].units
+   * 渲染單一分頁（B～F 共用；A 分頁改走 buildEntryTab，見下方）：
+   * 工具列（第三欄篩選 + 搜尋 + 全選）、人員表格、底部動作列（角色選擇〔選配〕 + 執行按鈕 + 匯出 CSV）
+   * @param {string} groupLabel  - 第三欄標題（B 用「單位」、C 用「單位」、D 用「擔任角色」、
+   *                               E 用「狀態／單位」、F 用「單位」），資料一律放在 users[].units
    * @param {Array|null} roleOptions - 底部角色選擇器的選項；null 表示此分頁不需要選角色
    * @param {Function|null} onAction - null 表示這是純檢視分頁（E 區），
    *                                   不顯示勾選欄與執行按鈕，只能篩選與匯出
@@ -929,13 +947,27 @@
     if (!hits.length) return null;
 
     const picked = hits[0];
-    const sameName = roles.filter((r) => r.roleName === picked.roleName);
     return {
       roleId: picked.roleId,
       roleName: picked.roleName,
       // 同名記錄的下一關不一致時，起點指到哪一筆會走出不同的鏈，要提醒 HR
-      nextConsistent: new Set(sameName.map((r) => r.nextRoleId)).size <= 1,
+      nextConsistent: isNextRoleConsistent(picked.roleId, roles),
     };
+  };
+
+  /**
+   * 依 role_id 查出該角色的「同名記錄下一關是否一致」。
+   *
+   * 供自動配對（matchEntryRole）與 A 分頁下拉即時變動（refresh）共用同一份判斷，
+   * 避免兩處各抄一份、日後改一邊漏改另一邊。
+   *
+   * @returns {boolean|null} 找不到對應角色時回 null（呼叫端視為「不顯示警告」）
+   */
+  const isNextRoleConsistent = (roleId, roles) => {
+    const picked = roles.find((r) => r.roleId === roleId);
+    if (!picked) return null;
+    const sameName = roles.filter((r) => r.roleName === picked.roleName);
+    return new Set(sameName.map((r) => r.nextRoleId)).size <= 1;
   };
 
   /**
@@ -1021,13 +1053,18 @@
       let exceptionVisible = false;
 
       for (const s of state.values()) {
-        const hasRole = Boolean(s.combo.getValue());
+        const roleId = s.combo.getValue();
+        const hasRole = Boolean(roleId);
         if (hasRole) assigned += 1;
 
         // 沒指定角色就勾不動，不可能送出不完整的資料
         s.cb.disabled = !hasRole;
         if (!hasRole && s.cb.checked) s.cb.checked = false;
         s.tr.style.background = hasRole ? '' : '#fdecea';
+
+        // 警告跟著目前選到的角色走：換角色、或在例外區手動挑選都要重新判斷
+        s.warn.style.display =
+          (hasRole && isNextRoleConsistent(roleId, roles) === false) ? '' : 'none';
 
         const haystack = [s.row.unit, s.row.title,
           ...s.row.members.map((m) => `${m.name} ${m.code}`)].join(' ');
@@ -1094,24 +1131,26 @@
       if (row.match) combo.setValue(row.match.roleId);
       tdRole.appendChild(combo.el);
 
-      // 同名記錄的下一關不一致，起點指到哪一筆會走出不同的鏈
-      if (row.match && !row.match.nextConsistent) {
-        const warn = document.createElement('div');
-        warn.textContent = '同名角色的下一關設定不一致，建議先用「批次設定下一關」統一';
-        warn.style.cssText = 'margin-top:4px; font-size:12px; color:#92400e;';
-        tdRole.appendChild(warn);
-      }
+      // 同名記錄的下一關不一致，起點指到哪一筆會走出不同的鏈。
+      // 這個警告要跟著「目前下拉的值」走，不能只在自動配對當下判斷一次就定死——
+      // HR 改選別的角色、或在例外區（match 一律是 null）手動挑角色，都要重新算。
+      // 顯示與否交給 refresh() 依 isNextRoleConsistent(combo.getValue()) 決定。
+      const warn = document.createElement('div');
+      warn.textContent = '同名角色的下一關設定不一致，建議先用「批次設定下一關」統一';
+      warn.style.cssText = 'margin-top:4px; font-size:12px; color:#92400e; display:none;';
+      tdRole.appendChild(warn);
 
       tr.append(tdCheck, tdUnit, tdTitle, tdCount, tdRole);
       tbody.appendChild(tr);
-      state.set(row.id, { row, tr, combo, cb });
+      state.set(row.id, { row, tr, combo, cb, warn });
     };
 
     rows.filter((r) => !r.isException).forEach(appendRow);
     const exceptionRows = rows.filter((r) => r.isException);
     if (exceptionRows.length) {
       dividerTr = appendDivider(
-        `兼任多單位／多職稱／資料不全（${exceptionRows.length} 人）— 請逐人指定`);
+        `兼任多單位／多職稱／資料不全（${exceptionRows.length} 人）— 請逐人指定` +
+        '（以下列一開始就是紅底，代表「尚未指定」，不是自動配對失敗——這區本來就不做自動配對）');
       exceptionRows.forEach(appendRow);
     }
     if (!rows.length) {
@@ -1131,13 +1170,37 @@
 
     actionBtn.addEventListener('click', () => {
       const pairs = [];
+      const pickedGroups = [];   // 已勾選且已指定角色的列，供確認視窗列出明細
+      let readyRows = 0;         // 已指定角色但沒勾選的列（會被留下，最容易被忽略）
+      let readyPeople = 0;
+      let unassignedRows = 0;    // 完全沒指定角色的列
+
       for (const s of state.values()) {
         const roleId = s.combo.getValue();
-        if (!s.cb.checked || !roleId) continue;
-        for (const m of s.row.members) pairs.push({ code: m.code, roleId });
+        if (!roleId) { unassignedRows += 1; continue; }
+
+        if (s.cb.checked) {
+          for (const m of s.row.members) pairs.push({ code: m.code, roleId });
+          pickedGroups.push({
+            label: `${s.row.unit || '—'}／${s.row.title || '—'}`,
+            roleLabel: s.combo.getLabel(),
+            count: s.row.members.length,
+          });
+        } else {
+          readyRows += 1;
+          readyPeople += s.row.members.length;
+        }
       }
-      const skipped = [...state.values()].filter((s) => !s.combo.getValue()).length;
-      onAction(pairs, skipped);
+
+      onAction({
+        pairs,
+        groupCount: pickedGroups.length,
+        peopleCount: new Set(pairs.map((p) => p.code)).size,
+        pickedGroups,
+        readyRows,
+        readyPeople,
+        unassignedRows,
+      });
     });
 
     exportBtn.addEventListener('click', () => {
@@ -1189,7 +1252,9 @@
    * @param {string} opts.loadingTitle 轉圈視窗標題，如「建立中…」
    * @param {() => Promise<any>} opts.write 實際寫入呼叫；回傳值會傳給 buildSuccessOptions
    * @param {(result: any) => object} opts.buildSuccessOptions 依寫入結果組出 Swal.fire 的成功選項
-   * @param {() => void} opts.rescan 重新掃描、刷新報告
+   * @param {() => Promise<void>} opts.rescan 重新掃描、刷新報告（async：runTool 內部會
+   *        開「掃描中…」的 modal、await API、最後才 Swal.close()，呼叫端必須把它當成
+   *        會失敗的非同步動作看待，不能假設它一定順利關掉轉圈）
    */
   const runWriteAction = async ({ loadingTitle, write, buildSuccessOptions, rescan }) => {
     Swal.fire({ title: loadingTitle, allowOutsideClick: false, didOpen: () => Swal.showLoading() });
@@ -1199,9 +1264,21 @@
     } catch (err) {
       console.error('[ApprovalRouting] 涵蓋率檢查寫入失敗', err);
       Swal.close();
-      await showWarning('寫入失敗', `${err.message}，部分可能已經寫入，請重新掃描確認目前狀態。`);
+      await showWarning('寫入失敗', `${err?.message || String(err)}，部分可能已經寫入，請重新掃描確認目前狀態。`);
     } finally {
-      rescan(); // 不論成功或失敗都要刷新，失敗時更需要看到部分寫入後的真實狀態
+      // rescan 就是 runTool：async、會開「掃描中…」modal、await API、最後才 Swal.close()。
+      // 這裡若不接住失敗，reject 會變成 unhandled rejection，轉圈永遠不會關——
+      // 寫入本身可能已經成功，卻讓 HR 卡在無限轉圈，比原本要修的症狀更糟。
+      try {
+        await rescan();
+      } catch (rescanErr) {
+        console.error('[ApprovalRouting] 涵蓋率檢查寫入後重新掃描失敗', rescanErr);
+        Swal.close();
+        await showWarning(
+          '重新掃描失敗',
+          `寫入已送出，請重新開啟「未設定名單」確認結果。（${rescanErr?.message || String(rescanErr)}）`,
+        );
+      }
     }
   };
 
@@ -1239,21 +1316,33 @@
       users: model.noEntry,
       roles: model.roles,
       roleOptions: buildRoleOptions(model.roles, { valueBy: 'roleId' }),
-      onAction: async (pairs, skipped) => {
+      onAction: async ({ pairs, groupCount, peopleCount, pickedGroups, readyRows, readyPeople, unassignedRows }) => {
         if (!pairs.length) return;
-        const people = new Set(pairs.map((p) => p.code)).size;
+
+        // 唯一一道把關：跨多單位、可能上百筆、不可逆的寫入，一定要讓 HR 看到
+        // 「幾組／幾人」與具體是哪些單位－職稱 → 角色，不能只講一個籠統的人數
+        const listHtml = pickedGroups.map((g) =>
+          `<div style="padding:4px 2px; border-bottom:1px solid #f0f0f0;">` +
+          `${esc(g.label)} → <strong>${esc(g.roleLabel)}</strong>（${g.count} 人）</div>`,
+        ).join('');
+
+        const readyNote = readyRows
+          ? `<div style="margin-top:8px; color:#92400e;">另有 <strong>${readyRows}</strong> 列（${readyPeople} 人）` +
+            `已經指定角色但沒有勾選，這次<strong>不會建立</strong>，留在清單裡等下次處理。</div>`
+          : '';
+        const unassignedNote = unassignedRows
+          ? `<div style="margin-top:4px; color:#92400e;">另有 ${unassignedRows} 列還沒指定起點角色，這次會略過。</div>`
+          : '';
 
         const ok = (await Swal.fire({
           icon: 'question',
-          title: `建立 ${people} 筆起點設定？`,
+          title: `建立 ${groupCount} 組／${peopleCount} 人的起點設定？`,
           html:
             `<div style="text-align:left;">` +
-            `這批涵蓋 <strong>${people}</strong> 位同仁，每人各建一筆，同一個人不會重複建立。` +
-            (skipped
-              ? `<br><span style="color:#92400e;">另有 ${skipped} 列還沒指定起點角色，這次會略過。</span>`
-              : '') +
+            `<div style="max-height:220px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:6px; padding:4px 10px; font-size:13px;">${listHtml}</div>` +
+            readyNote + unassignedNote +
             `</div>`,
-          width: '560px',
+          width: '620px',
           showCancelButton: true, confirmButtonText: '確定建立', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
@@ -1532,7 +1621,8 @@
   };
 
   // 單元測試用的出口；瀏覽器端不依賴它，不影響任何行為
-  window.ApprovalRouting.CoverageInternals = Object.freeze({ groupNoEntryUsers, matchEntryRole });
+  window.ApprovalRouting.CoverageInternals =
+    Object.freeze({ groupNoEntryUsers, matchEntryRole, isNextRoleConsistent });
 
   kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
     if (document.getElementById(CONFIG.BTN_ID)) return event;
