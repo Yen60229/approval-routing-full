@@ -8,6 +8,22 @@
 
 **Tech Stack:** Vanilla JS（ES2020+，IIFE）、kintone REST API、SweetAlert2、vitest + jsdom
 
+## 執行後的更正（2026-08-19）
+
+實際執行時發現並修正的兩件事，已反映在上面的內容裡：
+
+1. **Task 2 的測試原本綁死了排序結果**——本機 `Intl.Collator('zh-Hant')` 的 collation
+   是 `default`，`'課員'.localeCompare('課長','zh-Hant')` 回傳 1，跟計畫假設的順序相反。
+   專案 `tools/` 與 `core/` 共 17 處 `localeCompare` 都用不帶 collation 的 `'zh-Hant'`，
+   只在這支函式改成 pinyin 會不一致，所以**改測試不改實作**：用 Set 比對，只驗分組結果。
+
+2. **超出本計畫範圍的追加修正**——最終審查發現 `tools/05-coverage-check.js` 全部五處
+   批量寫入（A/B/C/D/F 區）都沒有 try/catch，寫入失敗時轉圈視窗永遠不關、不跳錯誤、
+   `rescan()` 不跑，而分批寫入代表前面的批次可能已經寫進 kintone 卻沒人知道。
+   已抽出共用的 `runWriteAction` 統一處理（commit `ce51a90`、`c03e18a`）。
+
+---
+
 ## Global Constraints
 
 - 語言：所有註解、UI 文案、commit 訊息一律**繁體中文**
@@ -193,7 +209,9 @@ describe('groupNoEntryUsers', () => {
       mkUser('a2', '王二', '課長', ['海運貨物']),
     ]);
     expect(groups).toHaveLength(2);
-    expect(groups.map((g) => g.title)).toEqual(['課員', '課長']);
+    // 排序用 localeCompare('zh-Hant')，實際順序取決於執行環境的 ICU collation，
+    // 這裡只驗證「不同職稱要分成不同組」，不綁定特定排序規則
+    expect(new Set(groups.map((g) => g.title))).toEqual(new Set(['課員', '課長']));
   });
 
   it('兼任多單位的人進例外區', () => {
