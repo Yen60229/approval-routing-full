@@ -1,15 +1,19 @@
 /**
  * 簽核者重複檢查（kintone App 685）— holder_type =「指定個人」的 holder_user 重複偵測
  *
+ * 【前提規則】一筆角色記錄只掛一個人（見 docs/對話脈絡.md §9.5）。
+ * 因此同一關有 N 個簽核者 = N 筆同名記錄，**同名多筆本身是正常的**。
+ *
  * 在角色定義表列表頁加入「簽核者重複檢查」按鈕，掃描所有**啟用中**且
- * holder_type =「指定個人」的角色記錄，分三類呈現「重複」：
+ * holder_type =「指定個人」的角色記錄，分三類呈現：
  *
- *   ① 同一筆記錄內重複 — 同一個帳號在同一筆的 holder_user 出現兩次以上
- *        純資料錯誤，沒有任何正當理由，可一鍵去重（保留一個，其餘移除）
+ *   ① 一筆記錄掛了多人 — holder_user 有兩筆以上（不同人或同一人被列兩次）
+ *        違反「一筆一人」規則。可一鍵拆分：原記錄留第一人（role_id 不變，
+ *        指向它的鏈不會斷），其餘每人各建一筆新記錄，沒有人會被移除。
  *
- *   ② 同名角色重複掛同一人 — 同一個人出現在多筆「role_name 相同」的記錄
- *        同名角色在本系統視為同一關卡，正常只該有一筆；多半是批次建立工具
- *        重複跑造成。可逐筆勾選後**刪除**或**停用**，並提供「保留第一筆」快捷。
+ *   ② 同一人在同一關被掛了多筆 — 同一個人出現在多筆「role_name 相同」的記錄
+ *        同一個人在同一關只該佔一筆。可逐筆勾選後**刪除**或**停用**，
+ *        並提供「保留第一筆」快捷。
  *
  *   ③ 一人身兼多個角色 — 同一個人出現在多筆「role_name 不同」的記錄
  *        兼任多關通常是正常的，列出來僅供確認沒有誤設（純檢視）
@@ -22,9 +26,10 @@
  *   tools/07-batch-next-role.js 批次改下一關）。
  *
  * 【影響的欄位】
- *   - 685 holder_user：僅 ①「去重」寫入，只移除重複列出的項目，成員集合不變
+ *   - 685 holder_user：僅 ①「拆分」寫入，原記錄縮成第一人，其餘人移到新記錄
  *   - 685 is_active  ：② 的「停用勾選記錄」取消勾選
- *   - 685 記錄本身   ：② 的「刪除勾選記錄」為永久刪除（kintone 無還原桶）
+ *   - 685 記錄本身   ：① 的「拆分」會新增記錄；
+ *                      ② 的「刪除勾選記錄」為永久刪除（kintone 無還原桶）
  *
  * 【依賴】
  *   - core/01-config.js（Config）
@@ -34,12 +39,18 @@
  *   2026-08-19  Jimmy/Claude  初版建立
  *   2026-08-19  Jimmy/Claude  ② 區改為可逐筆勾選刪除／停用，並加上鏈上游與起點
  *                             的被指向檢查，避免刪掉仍被引用的記錄造成斷鏈
+ *   2026-08-19  Jimmy/Claude  確立「一筆記錄只掛一人」規則後改版：
+ *                             ① 由「同一筆內同一人重複」擴大為「一筆掛多人」，
+ *                                動作由「去重」改為「拆成一人一筆」
+ *                             ② 措辭更正（同名多筆是正常的，違規的是同一人佔多筆）
+ *                             修正同一筆記錄在多個人的區塊各有一個 checkbox 時，
+ *                             勾選狀態不同步、導致刪錯筆的問題
  */
 (() => {
   'use strict';
 
-  const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, CHECKBOX, HOLDER_TYPE_OPTIONS: HT } =
-    window.ApprovalRouting.Config;
+  const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, CHECKBOX, HOLDER_TYPE_OPTIONS: HT,
+          SIGNING_MODE_OPTIONS: SM, ROLE_ID_PREFIX } = window.ApprovalRouting.Config;
   const { safeHandler, kintoneApi, showWarning } = window.ApprovalRouting.Utils;
 
   const CONFIG = Object.freeze({
@@ -88,7 +99,7 @@
   const fetchUserTypeRoles = async () => {
     const records = await fetchRoleRecords(
       ['$id', RF.ROLE_ID, RF.ROLE_NAME, RF.UNIT_NAME, RF.HOLDER_TYPE, RF.HOLDER_USER,
-       RF.NEXT_ROLE_ID, RF.SIGNING_MODE],
+       RF.NEXT_ROLE_ID, RF.SIGNING_MODE, RF.TITLE_LEVEL, RF.IS_CHAIN_END],
       `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") and ${RF.HOLDER_TYPE} in ("${HT.USER}")`,
     );
 
@@ -99,6 +110,9 @@
       unitName:   rec[RF.UNIT_NAME]?.value || '',
       nextRoleId: rec[RF.NEXT_ROLE_ID]?.value || '',
       signingMode: rec[RF.SIGNING_MODE]?.value || '',
+      // 拆成一人一筆時，新記錄沿用這些設定
+      titleLevel: rec[RF.TITLE_LEVEL]?.value || '',
+      isChainEnd: rec[RF.IS_CHAIN_END]?.value || [],
       // 保留原始順序與重複，重複偵測就靠它
       holders: (rec[RF.HOLDER_USER]?.value || []).map((u) => ({
         code: u.code,
@@ -155,7 +169,7 @@
 
   /**
    * 分析三類重複
-   * @returns {{withinRecord: Array, sameName: Array, crossRole: Array, totalRoles: number}}
+   * @returns {{multiHolder: Array, sameName: Array, crossRole: Array, totalRoles: number}}
    */
   const analyze = (roles, refs) => {
     // 每筆記錄補上被指向資訊（決定能不能刪）
@@ -168,19 +182,21 @@
         : '（未設定）';
     }
 
-    // ── ① 同一筆記錄內重複 ──
-    const withinRecord = [];
+    // ── ① 一筆記錄掛了多人 ──
+    // 規則是一筆記錄只掛一個人，所以 holder_user 有第二筆就算違規，
+    // 不論是不同人（該拆開）還是同一人被列兩次（該去重）。
+    const multiHolder = [];
     for (const r of roles) {
-      const count = new Map();
-      const nameOf = new Map();
-      for (const h of r.holders) {
-        count.set(h.code, (count.get(h.code) || 0) + 1);
-        nameOf.set(h.code, h.name);
-      }
-      const dups = [...count.entries()]
-        .filter(([, n]) => n > 1)
-        .map(([code, n]) => ({ code, name: nameOf.get(code), times: n }));
-      if (dups.length) withinRecord.push({ ...r, dups });
+      if (r.holders.length <= 1) continue;
+      const uniqueCodes = [...new Set(r.holders.map((h) => h.code))];
+      const nameOf = new Map(r.holders.map((h) => [h.code, h.name]));
+      multiHolder.push({
+        ...r,
+        uniqueCodes,
+        uniqueNames: uniqueCodes.map((c) => nameOf.get(c) || c),
+        // 拆完會變幾筆：原記錄留第一人，其餘各一筆新記錄
+        willBecome: uniqueCodes.length,
+      });
     }
 
     // ── 使用者 → 擔任的角色記錄（同一筆內重複只算一次）──
@@ -234,26 +250,68 @@
     sameName.sort(byName);
     crossRole.sort((a, b) => b.roleNames.length - a.roleNames.length || byName(a, b));
 
-    return { withinRecord, sameName, crossRole, totalRoles: roles.length };
+    return { multiHolder, sameName, crossRole, totalRoles: roles.length };
   };
 
   // ═══════════════════════════════════════════════════════════════════
   // 寫入動作
   // ═══════════════════════════════════════════════════════════════════
 
-  /** ① 同一筆記錄內去重：依原順序保留第一次出現，成員集合不變 */
-  const dedupeHolders = async (targets) => {
+  /** 產生 role_id 流水號的起點：現有最大的 ROLE_NNNN 再加 1 */
+  const nextRoleSeq = async () => {
+    const resp = await kintoneApi('/k/v1/records', 'GET', {
+      app: APP_ID.ROLE_DEFINITION,
+      fields: [RF.ROLE_ID],
+      query: `order by ${RF.ROLE_ID} desc limit ${CONFIG.RECORD_PAGE}`,
+    });
+    let max = 0;
+    for (const rec of resp.records) {
+      const val = rec[RF.ROLE_ID]?.value || '';
+      if (!val.startsWith(ROLE_ID_PREFIX)) continue;
+      const num = Number(val.slice(ROLE_ID_PREFIX.length));
+      if (Number.isInteger(num) && num > max) max = num;
+    }
+    return max + 1;
+  };
+
+  /**
+   * ① 拆成一人一筆
+   *
+   * 原記錄的 holder_user 只留第一個人（role_id 不變，指向它的鏈不會斷），
+   * 其餘每人各建一筆新記錄，其他欄位原封沿用。沒有人會被移除。
+   */
+  const splitHolders = async (targets) => {
+    // 原記錄：holder_user 縮成第一人
     const updates = targets.map((r) => ({
       id: r.recordId,
-      record: {
-        [RF.HOLDER_USER]: {
-          value: [...new Set(r.holders.map((h) => h.code))].map((code) => ({ code })),
-        },
-      },
+      record: { [RF.HOLDER_USER]: { value: [{ code: r.uniqueCodes[0] }] } },
     }));
+
+    // 其餘的人：各建一筆新記錄
+    let seq = await nextRoleSeq();
+    const creates = targets.flatMap((r) => r.uniqueCodes.slice(1).map((code) => ({
+      [RF.ROLE_ID]:      { value: `${ROLE_ID_PREFIX}${String(seq++).padStart(4, '0')}` },
+      [RF.ROLE_NAME]:    { value: r.roleName },
+      [RF.UNIT_NAME]:    { value: r.unitName },
+      [RF.TITLE_LEVEL]:  { value: r.titleLevel },
+      [RF.HOLDER_TYPE]:  { value: HT.USER },
+      [RF.HOLDER_USER]:  { value: [{ code }] },
+      [RF.HOLDER_GROUP]: { value: [] },
+      [RF.NEXT_ROLE_ID]: { value: r.nextRoleId },
+      [RF.IS_CHAIN_END]: { value: r.isChainEnd },
+      // 單選必填，原記錄沒填就給預設值，避免整批寫入失敗
+      [RF.SIGNING_MODE]: { value: r.signingMode || SM.ANY },
+      [RF.IS_ACTIVE]:    { value: [CHECKBOX.ACTIVE] },
+    })));
+
+    // 先新增再縮減：中途失敗時人還在原記錄上，不會有人不見
+    for (const part of chunk(creates, CONFIG.WRITE_BATCH)) {
+      await kintoneApi('/k/v1/records', 'POST', { app: APP_ID.ROLE_DEFINITION, records: part });
+    }
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
       await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
     }
+    return creates.length;
   };
 
   /** ② 永久刪除記錄（kintone 沒有還原桶，刪掉就沒了） */
@@ -301,7 +359,7 @@
       'background:#fff; border-radius:10px; width:min(1040px, 95vw); height:min(740px, 92vh); ' +
       'display:flex; flex-direction:column; padding:20px 24px; box-shadow:0 8px 40px rgba(0,0,0,.25);';
 
-    const { withinRecord, sameName, crossRole, totalRoles } = model;
+    const { multiHolder, sameName, crossRole, totalRoles } = model;
 
     // 勾選的記錄（跨群組共用一個集合）；locked 的記錄不允許進來
     const picked = new Set();
@@ -309,16 +367,17 @@
     sameName.forEach((u) => u.groups.forEach((g) => g.records.forEach((r) => recordById.set(r.recordId, r))));
 
     // ── ① ──
-    const sec1Rows = withinRecord.length
-      ? withinRecord.map((r) => `
+    const sec1Rows = multiHolder.length
+      ? multiHolder.map((r) => `
           <tr>
             <td style="${TD_CSS}">
               <a href="${recordUrl(r.recordId)}" target="_blank" style="${LINK_CSS}">${esc(r.roleName || r.roleId)}</a>
+              <span style="color:#999; font-size:12px;">（記錄 ${esc(r.recordId)}）</span>
             </td>
             <td style="${TD_CSS} color:#c0392b; font-weight:600;">
-              ${r.dups.map((d) => `${esc(d.name)} × ${d.times}`).join('<br>')}
+              ${r.uniqueNames.map(esc).join('、')}
             </td>
-            <td style="${TD_CSS} color:#666;">${r.holders.length} → ${new Set(r.holders.map((h) => h.code)).size}</td>
+            <td style="${TD_CSS} color:#666;">1 筆 → ${r.willBecome} 筆</td>
           </tr>`).join('')
       : emptyRow(3, '沒有這類問題');
 
@@ -404,28 +463,31 @@
 
         <div style="${SECTION_CSS}">
           <div style="${SECTION_HEAD_CSS} background:#fdecea; color:#7f1d1d;">
-            ① 同一筆記錄內重複（${withinRecord.length} 筆）
-            <span style="font-weight:400; font-size:13px;">— 同一個人在同一筆被列了兩次以上，屬純資料錯誤</span>
+            ① 一筆記錄掛了多人（${multiHolder.length} 筆）
+            <span style="font-weight:400; font-size:13px;">— 一筆記錄只該掛一個人，多人要拆成多筆</span>
           </div>
           <table style="${TABLE_CSS}">
             <thead><tr>
-              <th style="${TH_CSS}">角色</th><th style="${TH_CSS}">重複的人</th><th style="${TH_CSS}">去重後人數</th>
+              <th style="${TH_CSS}">角色</th><th style="${TH_CSS}">目前的簽核者</th><th style="${TH_CSS}">拆完</th>
             </tr></thead>
             <tbody>${sec1Rows}</tbody>
           </table>
-          ${withinRecord.length ? `
-            <div style="padding:10px 14px; border-top:1px solid #eee; text-align:right;">
-              <button data-role="dedupe"
-                style="font-size:14px; padding:9px 20px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;">
-                一鍵去重（${withinRecord.length} 筆）
+          ${multiHolder.length ? `
+            <div style="padding:10px 14px; border-top:1px solid #eee; display:flex; align-items:center; gap:12px;">
+              <span style="font-size:13px; color:#666;">
+                原記錄留第一個人（role_id 不變，鏈不會斷），其餘每人各建一筆新記錄，沒有人會被移除。
+              </span>
+              <button data-role="split"
+                style="margin-left:auto; white-space:nowrap; font-size:14px; padding:9px 20px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;">
+                拆成一人一筆（${multiHolder.length} 筆）
               </button>
             </div>` : ''}
         </div>
 
         <div style="${SECTION_CSS}">
           <div style="${SECTION_HEAD_CSS} background:#fff8e1; color:#92400e;">
-            ② 同名角色重複掛同一人（${sameName.length} 人）
-            <span style="font-weight:400; font-size:13px;">— 同名角色視為同一關卡，正常只該有一筆</span>
+            ② 同一人在同一關被掛了多筆（${sameName.length} 人）
+            <span style="font-weight:400; font-size:13px;">— 同名角色有多筆是正常的（一人一筆），但同一個人只該佔其中一筆</span>
           </div>
           ${sameName.length ? `
             <div style="padding:10px 14px; background:#fffdf5; border-bottom:1px solid #f0e6c8; font-size:13px; color:#92400e;">
@@ -483,11 +545,18 @@
 
     panel.querySelector('[data-role="close"]').addEventListener('click', () => overlay.remove());
 
+    /** 同一筆記錄在多個人的區塊各有一個 checkbox，全部設成同一個狀態 */
+    const syncCheckbox = (recordId, checked) => {
+      body.querySelectorAll(`input[data-record="${CSS.escape(recordId)}"]`)
+        .forEach((cb) => { cb.checked = checked; });
+      checked ? picked.add(recordId) : picked.delete(recordId);
+    };
+
     // 勾選（事件委派，涵蓋所有群組的表格）
     body.addEventListener('change', (e) => {
       const id = e.target.dataset?.record;
       if (!id) return;
-      e.target.checked ? picked.add(id) : picked.delete(id);
+      syncCheckbox(id, e.target.checked);
       updateCount();
     });
 
@@ -499,8 +568,7 @@
       if (!tbody) return;
       [...tbody.querySelectorAll('input[data-record]')].forEach((cb, idx) => {
         if (cb.disabled) return;
-        cb.checked = idx > 0;
-        cb.checked ? picked.add(cb.dataset.record) : picked.delete(cb.dataset.record);
+        syncCheckbox(cb.dataset.record, idx > 0);
       });
       updateCount();
     });
@@ -566,24 +634,30 @@
       rescan();
     });
 
-    panel.querySelector('[data-role="dedupe"]')?.addEventListener('click', async () => {
-      const total = withinRecord.length;
-      const removed = withinRecord.reduce(
-        (sum, r) => sum + (r.holders.length - new Set(r.holders.map((h) => h.code)).size), 0);
+    panel.querySelector('[data-role="split"]')?.addEventListener('click', async () => {
+      const total = multiHolder.length;
+      const added = multiHolder.reduce((sum, r) => sum + r.uniqueCodes.length - 1, 0);
 
       const ok = (await Swal.fire({
         icon: 'question',
-        title: `對 ${total} 筆記錄去重？`,
+        title: `把 ${total} 筆記錄拆成一人一筆？`,
         html:
-          `<div style="text-align:left;">會移除 <strong>${removed}</strong> 個重複列出的項目。<br>` +
-          `每個人至少保留一個，<strong>簽核者名單的成員不會有任何變化</strong>。</div>`,
-        showCancelButton: true, confirmButtonText: '確定去重', cancelButtonText: '取消',
+          `<div style="text-align:left;">` +
+          `會新增 <strong>${added}</strong> 筆角色記錄（role_id 自動流水號），` +
+          `原記錄只留第一個人。<br>` +
+          `其他欄位原封沿用，<strong>沒有任何人會被移除</strong>。</div>`,
+        width: '620px',
+        showCancelButton: true, confirmButtonText: '確定拆分', cancelButtonText: '取消',
       })).isConfirmed;
       if (!ok) return;
 
       Swal.fire({ title: '處理中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-      await dedupeHolders(withinRecord);
-      await Swal.fire({ icon: 'success', title: `已處理 ${total} 筆`, timer: 1800, showConfirmButton: false });
+      const created = await splitHolders(multiHolder);
+      await Swal.fire({
+        icon: 'success',
+        title: `已拆分 ${total} 筆，新增 ${created} 筆`,
+        timer: 2200, showConfirmButton: false,
+      });
       rescan();
     });
 

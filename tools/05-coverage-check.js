@@ -6,9 +6,10 @@
  *   A. 未設定起點 — 使用中、但 686 沒有起點記錄的人（無法送單，最優先處理）
  *        → 勾選多人 + 選一個起點角色 → 批量建立 686 記錄
  *   B. 不具簽核身分 — 使用中、但不在任何角色的 holder_user、也不在任何簽核群組的人
- *        → 勾選多人 + 選一個「指定個人」角色 → 批量加入該角色的 holder_user
- *          （同名角色視為同一關卡，會一併寫入所有同名記錄，維持一致性；
- *            群組型角色的成員仍由 IT 在 cybozu 後台維護，本工具不碰）
+ *        → 勾選多人 + 選一個「指定個人」角色 → **每人各建一筆新的同名角色記錄**
+ *          （holder_user 一筆只掛一個人，所以同一關有幾個簽核者就有幾筆同名記錄；
+ *            新記錄的下一關等設定沿用記錄編號最小的那筆同名記錄；
+ *            既有記錄一概不動；群組型角色的成員仍由 IT 在 cybozu 後台維護）
  *   C. 已停用仍有起點 — kintone 帳號已停用、686 起點記錄卻仍啟用中
  *        → 勾選多人 → 批量取消「啟用中」（保留記錄不刪除）
  *   D. 已停用仍是簽核者 — 帳號已停用卻仍掛在角色的 holder_user 上，
@@ -28,7 +29,7 @@
  *
  * 【影響的欄位】
  *   - 686 employee / entry_role_id / is_active：A 區批量建立寫入；C 區取消啟用中
- *   - 685 holder_user：只有 B 區會寫入，且一律「附加」（不覆蓋、不移除既有簽核者）
+ *   - 685 記錄本身：B 區新增（每人一筆，holder_user 只掛該人）；既有記錄不修改
  *   - 685 is_active：D 區與 F 區取消勾選（停用整筆角色記錄）
  *
  * 【依賴】
@@ -53,12 +54,15 @@
  *                             同時警示會斷掉幾條簽核鏈
  *   2026-08-19  Jimmy/Claude  C/D 區標示「疑似回任」：停用帳號若有同名的使用中帳號，
  *                             提示應改指到新帳號，而非只是把舊設定停用
+ *   2026-08-19  Jimmy/Claude  B 區改為每人新建一筆角色記錄，不再把人附加進既有記錄。
+ *                             舊做法會把勾選的人全部寫進「所有」同名記錄，造成同一人
+ *                             被重複掛在同一關的多筆記錄上（tools/06 掃出的滿江紅主因）
  */
 (() => {
   'use strict';
 
-  const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, CHECKBOX, HOLDER_TYPE_OPTIONS: HT } =
-    window.ApprovalRouting.Config;
+  const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, CHECKBOX, HOLDER_TYPE_OPTIONS: HT,
+          SIGNING_MODE_OPTIONS: SM, ROLE_ID_PREFIX } = window.ApprovalRouting.Config;
   const { safeHandler, kintoneApi, showWarning } = window.ApprovalRouting.Utils;
 
   const CONFIG = Object.freeze({
@@ -191,7 +195,7 @@
     const records = await fetchRecordsAll(
       APP_ID.ROLE_DEFINITION,
       ['$id', RF.ROLE_ID, RF.ROLE_NAME, RF.HOLDER_TYPE, RF.HOLDER_USER, RF.HOLDER_GROUP,
-       RF.UNIT_NAME, RF.NEXT_ROLE_ID],
+       RF.UNIT_NAME, RF.NEXT_ROLE_ID, RF.TITLE_LEVEL, RF.IS_CHAIN_END, RF.SIGNING_MODE],
       `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}")`,
     );
 
@@ -211,6 +215,10 @@
         roleName: rec[RF.ROLE_NAME]?.value || '',
         unitName: rec[RF.UNIT_NAME]?.value || '',
         nextRoleId: rec[RF.NEXT_ROLE_ID]?.value || '',
+        // B 區建新記錄時當範本沿用
+        titleLevel: rec[RF.TITLE_LEVEL]?.value || '',
+        isChainEnd: rec[RF.IS_CHAIN_END]?.value || [],
+        signingMode: rec[RF.SIGNING_MODE]?.value || '',
         holderType,
         holderUsers,
       });
@@ -389,30 +397,75 @@
   };
 
   /**
-   * B 區：把使用者「附加」到指定角色名稱的 holder_user
-   * 同名角色視為同一關卡，一併更新所有同名的「指定個人」記錄，維持一致性
+   * 取同名角色當新記錄的範本
+   *
+   * 一筆角色記錄只掛一個人，所以同一關有幾個簽核者就有幾筆同名記錄。
+   * 新記錄的下一關等設定沿用「記錄編號最小」的那筆。
+   *
+   * @returns {{tpl: object|null, count: number, nextConsistent: boolean}}
+   *   nextConsistent：同名記錄的 next_role_id 是否一致（不一致代表資料已經有問題）
    */
-  const assignHolders = async (userCodes, roleName, roles) => {
-    const targets = roles.filter(
-      (r) => r.roleName === roleName && r.holderType === HT.USER,
-    );
-    const updates = targets.map((r) => ({
-      id: r.recordId,
-      record: {
-        [RF.HOLDER_USER]: {
-          // 既有成員 + 新成員去重後附加，不覆蓋原設定
-          value: [...new Set([...r.holderUsers, ...userCodes])].map((code) => ({ code })),
-        },
-      },
+  const pickRoleTemplate = (roleName, roles) => {
+    const siblings = roles
+      .filter((r) => r.roleName === roleName && r.holderType === HT.USER)
+      .sort((a, b) => Number(a.recordId) - Number(b.recordId));
+    return {
+      tpl: siblings[0] || null,
+      count: siblings.length,
+      nextConsistent: new Set(siblings.map((r) => r.nextRoleId)).size <= 1,
+    };
+  };
+
+  /** 產生 role_id 流水號的起點：現有最大的 ROLE_NNNN 再加 1 */
+  const nextRoleSeq = async () => {
+    const resp = await kintoneApi('/k/v1/records', 'GET', {
+      app: APP_ID.ROLE_DEFINITION,
+      fields: [RF.ROLE_ID],
+      query: `order by ${RF.ROLE_ID} desc limit ${CONFIG.RECORD_PAGE}`,
+    });
+    let max = 0;
+    for (const rec of resp.records) {
+      const val = rec[RF.ROLE_ID]?.value || '';
+      if (!val.startsWith(ROLE_ID_PREFIX)) continue;
+      const num = Number(val.slice(ROLE_ID_PREFIX.length));
+      if (Number.isInteger(num) && num > max) max = num;
+    }
+    return max + 1;
+  };
+
+  /**
+   * B 區：一人建一筆新的角色記錄
+   *
+   * holder_user 一筆只能掛一個人，所以「加入為簽核者」是**新增記錄**，
+   * 不是把人塞進既有記錄。既有的同名記錄一概不動。
+   */
+  const createHolderRoles = async (userCodes, roleName, roles) => {
+    const { tpl } = pickRoleTemplate(roleName, roles);
+    if (!tpl) throw new Error(`找不到「${roleName}」的既有記錄，無法沿用設定。`);
+
+    let seq = await nextRoleSeq();
+    const records = userCodes.map((code) => ({
+      [RF.ROLE_ID]:      { value: `${ROLE_ID_PREFIX}${String(seq++).padStart(4, '0')}` },
+      [RF.ROLE_NAME]:    { value: roleName },
+      [RF.UNIT_NAME]:    { value: tpl.unitName },
+      [RF.TITLE_LEVEL]:  { value: tpl.titleLevel },
+      [RF.HOLDER_TYPE]:  { value: HT.USER },
+      [RF.HOLDER_USER]:  { value: [{ code }] },
+      [RF.HOLDER_GROUP]: { value: [] },
+      [RF.NEXT_ROLE_ID]: { value: tpl.nextRoleId },
+      [RF.IS_CHAIN_END]: { value: tpl.isChainEnd },
+      // 單選必填，範本沒填就給預設值，避免整批寫入失敗
+      [RF.SIGNING_MODE]: { value: tpl.signingMode || SM.ANY },
+      [RF.IS_ACTIVE]:    { value: [CHECKBOX.ACTIVE] },
     }));
 
-    for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', {
+    for (const part of chunk(records, CONFIG.WRITE_BATCH)) {
+      await kintoneApi('/k/v1/records', 'POST', {
         app: APP_ID.ROLE_DEFINITION,
         records: part,
       });
     }
-    return targets.length;
+    return records.length;
   };
 
   /** C 區：批量停用 686 起點記錄（取消勾選「啟用中」，記錄保留不刪除） */
@@ -865,20 +918,36 @@
       actionLabel: '加入為簽核者',
       onAction: async (codes, roleName, roleLabel) => {
         if (!codes.length || !roleName) return;
+
+        const { tpl, count, nextConsistent } = pickRoleTemplate(roleName, model.roles);
+        if (!tpl) {
+          await showWarning('無法加入', `找不到「${roleName}」的既有記錄，無法沿用設定。`);
+          return;
+        }
+
         const ok = (await Swal.fire({
           icon: 'question',
-          title: `將 ${codes.length} 人加入簽核者？`,
-          html: `角色：<strong>${esc(roleLabel)}</strong>（附加到現有簽核者之後，不會移除任何人）`,
-          showCancelButton: true, confirmButtonText: '確定加入', cancelButtonText: '取消',
+          title: `新增 ${codes.length} 筆角色記錄？`,
+          html:
+            `<div style="text-align:left;">` +
+            `角色：<strong>${esc(roleLabel)}</strong><br>` +
+            `一筆記錄只掛一個人，所以每人各建一筆新記錄，<strong>既有的 ${count} 筆不會被更動</strong>。<br>` +
+            `下一關等設定沿用記錄 ${esc(tpl.recordId)}（${esc(tpl.roleId)}）。` +
+            (nextConsistent ? '' :
+              `<div style="margin-top:8px; color:#c0392b; font-weight:700;">` +
+              `注意：現有同名記錄的「下一關」設定不一致，新記錄只會沿用其中一種，` +
+              `建議先用「批次設定下一關」統一。</div>`) +
+            `</div>`,
+          width: '620px',
+          showCancelButton: true, confirmButtonText: '確定新增', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
 
         Swal.fire({ title: '寫入中…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const touched = await assignHolders(codes, roleName, model.roles);
+        const created = await createHolderRoles(codes, roleName, model.roles);
         await Swal.fire({
           icon: 'success',
-          title: `已將 ${codes.length} 人加入「${roleName}」`,
-          text: touched > 1 ? `（同名角色共 ${touched} 筆記錄已同步更新）` : undefined,
+          title: `已新增 ${created} 筆「${roleName}」`,
           timer: 2200, showConfirmButton: false,
         });
         rescan();
