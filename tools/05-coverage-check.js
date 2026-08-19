@@ -1155,6 +1155,9 @@
     showReport(model, runTool);
   };
 
+  // 單元測試用的出口；瀏覽器端不依賴它，不影響任何行為
+  window.ApprovalRouting.CoverageInternals = Object.freeze({});
+
   kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
     if (document.getElementById(CONFIG.BTN_ID)) return event;
 

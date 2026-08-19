@@ -48,6 +48,8 @@ const Config = Object.freeze({
   ROLE_FIELDS: Object.freeze({
     ROLE_ID:      'role_id',
     ROLE_NAME:    'role_name',
+    UNIT_NAME:    'unit_name',
+    TITLE_LEVEL:  'title_level',
     HOLDER_TYPE:  'holder_type',
     HOLDER_GROUP: 'holder_group',
     HOLDER_USER:  'holder_user',
@@ -113,6 +115,23 @@ global.window.ApprovalRouting = {
   // Engine 由 03-chain-builder.js 載入後填入
 };
 
+// ─── ApprovalRouting.Utils mock（tools/ 下的工具會解構它） ────────────────
+
+const mockShowWarning = vi.fn().mockResolvedValue(undefined);
+const mockShowSuccess = vi.fn().mockResolvedValue(undefined);
+const mockShowConfirm = vi.fn().mockResolvedValue(true);
+
+global.window.ApprovalRouting.Utils = Object.freeze({
+  // 測試不驗證錯誤包裝行為，直接原樣回傳處理函式
+  safeHandler:       (fn) => fn,
+  showSuccess:       mockShowSuccess,
+  showWarning:       mockShowWarning,
+  showConfirm:       mockShowConfirm,
+  kintoneApi:        kintoneApiMock,
+  pushSubmitError:   vi.fn(),
+  flushSubmitErrors: vi.fn(),
+});
+
 // 暴露 mock 函式給測試檔案使用
 global.__mocks__ = {
   kintoneApi:        kintoneApiMock,
@@ -122,4 +141,5 @@ global.__mocks__ = {
   ensureFreshRoles:  mockEnsureFreshRoles,
   getEntryRoleId:    mockGetEntryRoleId,
   getGroupMembers:   mockGetGroupMembers,
+  showWarning:       mockShowWarning,
 };
