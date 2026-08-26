@@ -17,6 +17,11 @@
  * 2026-04-19  Jimmy/Claude  UI 全面升級：改版為輕量化 Timeline (圓點閃爍 + 連線) 風格
  * 2026-05-03  Jimmy/Claude  同名節點合併：上游同 roleName 的節點合為一個，hover tooltip 顯示「同仁（N位）」姓名清單
  * 2026-07-12  Jimmy/Claude  新增頁未儲存記錄查不到角色時顯示佔位文字，不再誤報「找不到此角色的資料」
+ * 2026-08-26  Jimmy/Claude  上游改為「階層對齊表」：一列＝一條分支、一欄＝一關，
+ *                           單位名同列只寫一次、共同上層用 rowspan 只畫一次，消除重複文字
+ * 2026-08-26  Jimmy/Claude  共同段落改直式時間軸（圓點 + 關卡標示），解決橫向換行被切成多段的問題
+ * 2026-08-26  Jimmy/Claude  高層角色上游可達上百條：改為左右版面（上游區塊／共同段落），
+ *                           上游各關靠左不留空欄、超過門檻預設收合成摘要並提供搜尋過濾
  */
 (() => {
   'use strict';
@@ -26,6 +31,10 @@
 
   const PREVIEW_CONTAINER_ID = 'ar-chain-preview-content';
   const MAX_DEPTH = 20; // 防無限迴圈
+
+  // 上游分支超過此數量 → 預設收合成摘要，並提供搜尋框
+  // （高層角色如總經理，上游可能上百條，全部攤開會蓋掉真正要看的下游）
+  const UPSTREAM_FOLD_THRESHOLD = 8;
 
   /**
    * 取得所有啟用角色，建成雙向綁定的 Map (roleId → record)
@@ -154,11 +163,67 @@
       }
       .ar-pulse { animation: ar-pulse-anim 2s infinite; }
 
-      /* 水平連接線 */
-      .ar-line { width: 32px; height: 2px; background: #cbd5e1; margin: 0 8px; flex-shrink: 0; }
+      /* 版面：左＝上游區塊（可收合），右＝共同段落 */
+      .ar-layout { display: flex; align-items: flex-start; gap: 18px; }
+      .ar-common {
+        background: #f8fafc; border-left: 2px solid #cbd5e1;
+        border-radius: 0 8px 8px 0; padding: 8px 16px; flex-shrink: 0;
+      }
 
-      /* 多方匯流時的垂直分組線 */
-      .ar-tree-border { border-right: 2px solid #cbd5e1; padding-right: 16px; margin-right: 4px; }
+      /* 階層對齊表：一列 = 一條上游分支，一欄 = 一關（靠左排，不留空欄） */
+      .ar-grid { border-collapse: separate; border-spacing: 0; }
+      .ar-grid th {
+        font-size: 11px; color: #94a3b8; font-weight: 700; text-align: left;
+        padding: 0 12px 6px; letter-spacing: 0.5px; white-space: nowrap;
+      }
+      .ar-grid td { padding: 6px 12px; border-top: 1px solid #eef2f6; vertical-align: middle; white-space: nowrap; }
+      .ar-grid tbody tr:first-child td { border-top: none; }
+
+      /* 左欄的單位名（同一列共用時只寫一次） */
+      .ar-unit { font-size: 13px; color: #64748b; }
+
+      /* 關與關之間的方向指示 */
+      .ar-arrow { color: #cbd5e1; margin-right: 6px; }
+      .ar-to    { color: #cbd5e1; padding-left: 0; padding-right: 0; }
+
+      /* 上游收合按鈕與搜尋框 */
+      .ar-fold-btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        background: #fff; border: 1px dashed #cbd5e1; border-radius: 20px;
+        padding: 6px 14px; font-size: 13px; color: #475569; cursor: pointer;
+        font-family: inherit;
+      }
+      .ar-fold-btn:hover { border-color: #94a3b8; background: #f8fafc; }
+      .ar-fold-hint { color: #94a3b8; }
+      .ar-search-box {
+        width: 220px; padding: 5px 10px; font-size: 13px; font-family: inherit;
+        border: 1px solid #cbd5e1; border-radius: 6px; color: #475569;
+      }
+      .ar-search-box:focus { outline: none; border-color: #3b82f6; }
+      .ar-search-bar { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+      .ar-search-note { font-size: 12px; color: #94a3b8; }
+
+      /* 展開後仍限制高度，避免上百列把整頁撐到幾千像素 */
+      .ar-up-scroll { max-height: 420px; overflow-y: auto; }
+
+      /* 上游職稱標籤 */
+      .ar-chip {
+        display: inline-flex; align-items: center;
+        background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px;
+        padding: 2px 8px; font-size: 13px; color: #475569;
+        margin: 2px 5px 2px 0; cursor: help;
+      }
+
+      /* 共同段落：直式時間軸（不論幾關都是一條連續的線，不換行也不橫捲） */
+      .ar-vchain { position: relative; padding-left: 2px; }
+      .ar-vchain::before {
+        content: ''; position: absolute; left: 6px; top: 16px; bottom: 16px;
+        width: 2px; background: #cbd5e1;
+      }
+      .ar-vrow { display: flex; align-items: center; gap: 9px; padding: 4px 0; position: relative; }
+      /* 圓點外圈用儲存格底色描邊，讓垂直線看起來被節點斷開 */
+      .ar-vdot { box-shadow: 0 0 0 3px #f8fafc; }
+      .ar-step { font-size: 11px; color: #94a3b8; min-width: 40px; flex-shrink: 0; }
 
       /* 人數 badge */
       .ar-count-badge {
@@ -245,6 +310,47 @@
     });
   };
 
+  /**
+   * 綁定上游區塊的互動：收合切換與即時搜尋（同樣用事件委派，重繪後不必解綁）。
+   */
+  const bindUpstreamEvents = (containerEl) => {
+    containerEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-ar-fold]');
+      if (!btn) return;
+      const body = containerEl.querySelector('[data-ar-fold-body]');
+      if (!body) return;
+
+      const willOpen = body.hidden;
+      body.hidden = !willOpen;
+      btn.querySelector('.ar-caret').textContent = willOpen ? '▾' : '▸';
+      btn.querySelector('.ar-fold-hint').textContent = willOpen ? '（收合）' : '（展開全部）';
+      if (willOpen) body.querySelector('[data-ar-search-box]')?.focus();
+    });
+
+    containerEl.addEventListener('input', (e) => {
+      const box = e.target.closest('[data-ar-search-box]');
+      if (!box) return;
+
+      const keyword = box.value.trim().toLowerCase();
+      const trs = containerEl.querySelectorAll('.ar-grid tbody tr');
+      let hit = 0;
+      for (const tr of trs) {
+        const match = !keyword || (tr.dataset.arSearch ?? '').includes(keyword);
+        tr.hidden = !match;
+        if (match) hit++;
+      }
+
+      const note = containerEl.querySelector('[data-ar-search-note]');
+      if (note) note.textContent = keyword ? `符合 ${hit} 條分支` : '';
+    });
+  };
+
+  /** 掛上預覽區的所有事件（tooltip + 上游互動） */
+  const bindPreviewEvents = (containerEl) => {
+    bindTooltipEvents(containerEl);
+    bindUpstreamEvents(containerEl);
+  };
+
   /** 人頭 SVG icon（tooltip 用） */
   const PERSON_ICON = `<svg width="11" height="11" viewBox="0 0 16 16" fill="#94a3b8" style="flex-shrink:0"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 1a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z"/></svg>`;
 
@@ -257,24 +363,25 @@
    * @param {'normal'|'current'|'end'|'broken'} state
    * @param {string[]} [holderNames] - 覆寫 role.holderNames（合併節點使用）
    */
-  const renderNodeHtml = (role, state = 'normal', holderNames) => {
-    let dotBg      = '#e2e8f0';
-    let dotBorder  = '#94a3b8';
-    let titleColor = '#64748b';
-    let pulseClass = '';
-    let badge      = '';
+  /** 各狀態的配色與標籤（橫式節點與直式節點共用） */
+  const NODE_STYLE = Object.freeze({
+    normal:  { dotBg: '#e2e8f0', dotBorder: '#94a3b8', titleColor: '#64748b', pulseClass: '', badge: '' },
+    current: {
+      dotBg: '#3b82f6', dotBorder: '#2563eb', titleColor: '#1d4ed8', pulseClass: 'ar-pulse',
+      badge: '<span style="background:#e0e7ff;color:#4f46e5;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;border:1px solid #c7d2fe;">目前</span>',
+    },
+    end: {
+      dotBg: '#22c55e', dotBorder: '#16a34a', titleColor: '#15803d', pulseClass: '',
+      badge: '<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;border:1px solid #bbf7d0;">終點</span>',
+    },
+    broken: {
+      dotBg: '#ef4444', dotBorder: '#dc2626', titleColor: '#b91c1c', pulseClass: '',
+      badge: '<span style="background:#fee2e2;color:#b91c1c;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;">斷鏈</span>',
+    },
+  });
 
-    if (state === 'current') {
-      dotBg = '#3b82f6'; dotBorder = '#2563eb'; titleColor = '#1d4ed8';
-      pulseClass = 'ar-pulse';
-      badge = '<span style="background:#e0e7ff;color:#4f46e5;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;border:1px solid #c7d2fe;">目前</span>';
-    } else if (state === 'end') {
-      dotBg = '#22c55e'; dotBorder = '#16a34a'; titleColor = '#15803d';
-      badge = '<span style="background:#dcfce7;color:#16a34a;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;border:1px solid #bbf7d0;">終點</span>';
-    } else if (state === 'broken') {
-      dotBg = '#ef4444'; dotBorder = '#dc2626'; titleColor = '#b91c1c';
-      badge = '<span style="background:#fee2e2;color:#b91c1c;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;">斷鏈</span>';
-    }
+  const renderNodeHtml = (role, state = 'normal', holderNames) => {
+    const { dotBg, dotBorder, titleColor, pulseClass, badge } = NODE_STYLE[state] ?? NODE_STYLE.normal;
 
     const names      = holderNames !== undefined ? holderNames : (role.holderNames || []);
     const countBadge = names.length > 1
@@ -298,65 +405,187 @@
     `;
   };
 
+  // ─── 上游：階層對齊表（一列 = 一條分支、一欄 = 一關）───
+
   /**
-   * [遞迴] 繪製上游 (多源頭樹狀結構)
-   *
-   * 同 roleName 的兄弟節點合併為一個視覺節點：
-   *   - 右上角顯示人數 badge（>1 時）
-   *   - hover tooltip 列出所有持有人姓名
+   * 把角色名稱拆成「單位」與「職稱」，只用於畫面上消除重複文字。
+   * ⚠ 純顯示用途，不參與任何簽核者推導（推導一律走 role_id）。
+   * 找不到分隔符號時，整串當作職稱、單位留空。
    */
-  const buildUpstreamHtml = (roleId, roleMap, visited) => {
-    const role = roleMap.get(roleId);
-    if (!role || role.prevRoleIds.length === 0) return '';
+  const splitRoleName = (roleName = '') => {
+    const idx = Math.max(roleName.lastIndexOf('－'), roleName.lastIndexOf('—'), roleName.lastIndexOf('-'));
+    return idx > 0
+      ? { unit: roleName.slice(0, idx), title: roleName.slice(idx + 1) }
+      : { unit: '', title: roleName };
+  };
 
-    if (visited.has(roleId))
-      return `<div style="color:red;font-size:12px;">(循環錯誤)</div>`;
-    visited.add(roleId);
-
-    // 將同層兄弟（prevRoleIds）依 roleName 分組合併
-    // Map<roleName, { representative: role, allNames: string[] }>
+  /**
+   * 把一批 roleId 依 roleName 合併成群組（同名只出現一次、人數與姓名累加）。
+   * @returns {Array<{ representative: object, roleIds: string[], names: string[] }>}
+   */
+  const mergeByRoleName = (roleIds, roleMap) => {
     const grouped = new Map();
-    for (const pId of role.prevRoleIds) {
-      const pRole = roleMap.get(pId);
-      if (!pRole) continue;
-      if (!grouped.has(pRole.roleName)) {
-        grouped.set(pRole.roleName, { representative: pRole, allNames: [...pRole.holderNames] });
-      } else {
-        grouped.get(pRole.roleName).allNames.push(...pRole.holderNames);
-      }
+    for (const id of roleIds) {
+      const role = roleMap.get(id);
+      if (!role) continue;
+      const g = grouped.get(role.roleName)
+        ?? { representative: role, roleIds: [], names: [] };
+      g.roleIds.push(id);
+      g.names.push(...role.holderNames);
+      grouped.set(role.roleName, g);
     }
+    return [...grouped.values()];
+  };
 
-    // 渲染每一個合併後的「代表節點」（同名的只渲染一次）
-    // 注意：grand-parents 也只遞迴進代表節點（prevRoleIds[0]），避免重複
-    const parentsHtml = [...grouped.values()]
-      .map(({ representative: pRole, allNames }) => {
-        const grandParentsHtml = buildUpstreamHtml(pRole.roleId, roleMap, new Set(visited));
-        const nodeHtml = renderNodeHtml(pRole, 'normal', allNames);
-        return `
-          <div style="display:flex; align-items:center;">
-            ${grandParentsHtml}
-            ${nodeHtml}
-          </div>`;
+  /**
+   * 建立上游矩陣：目前節點的每一個「直屬上一關」各成一列，
+   * 再沿著 prevRoleIds 逐關往外 BFS，同一關的所有角色放進同一格。
+   *
+   * @returns {Array<Array<Array<object>>>} rows[列][關] = 該格的群組陣列
+   *          每列 index 0 為最靠近目前節點的那一關（渲染時靠右對齊）
+   */
+  const buildUpstreamMatrix = (currentRoleId, roleMap) => {
+    const directGroups = mergeByRoleName(roleMap.get(currentRoleId)?.prevRoleIds ?? [], roleMap);
+
+    return directGroups.map((group) => {
+      const levels = [[group]];
+      // visited 同時擔任防循環：同一個角色在同一列只會出現一次
+      const visited = new Set([currentRoleId, ...group.roleIds]);
+      let frontier = group.roleIds;
+
+      for (let d = 0; d < MAX_DEPTH; d++) {
+        const prevIds = frontier
+          .flatMap((id) => roleMap.get(id)?.prevRoleIds ?? [])
+          .filter((id) => !visited.has(id));
+        if (prevIds.length === 0) break;
+        prevIds.forEach((id) => visited.add(id));
+        levels.push(mergeByRoleName(prevIds, roleMap));
+        frontier = prevIds;
+      }
+      return levels;
+    });
+  };
+
+  /** 該列所有角色是否共用同一個單位名；是則回傳單位名，否則回傳空字串 */
+  const getRowUnit = (levels) => {
+    const units = levels
+      .flat()
+      .map((g) => splitRoleName(g.representative.roleName).unit);
+    return units.length && units.every((u) => u && u === units[0]) ? units[0] : '';
+  };
+
+  /** 單一群組的 tooltip 資料（人數 + 角色代碼），與 renderNodeHtml 用同一格式 */
+  const tipAttr = (group) =>
+    JSON.stringify({ names: group.names, roleId: group.representative.roleId }).replace(/"/g, '&quot;');
+
+  /** 一般欄位：以標籤（chip）呈現同一關的多個角色 */
+  const renderChipsCell = (groups, rowUnit) =>
+    groups
+      .map((g) => {
+        const { unit, title } = splitRoleName(g.representative.roleName);
+        const label = rowUnit && unit === rowUnit ? title : g.representative.roleName;
+        const count = g.names.length > 1 ? `<span class="ar-count-badge">${g.names.length}</span>` : '';
+        return `<span class="ar-chip" data-ar-tip="${tipAttr(g)}">${label}${count}</span>`;
       })
       .join('');
 
-    const treeClass = grouped.size > 1 ? 'ar-tree-border' : '';
+  /** 最靠近目前節點的那一關：沿用圓點節點樣式，維持流程線的視覺連續性 */
+  const renderNodesCell = (groups, rowUnit) =>
+    groups
+      .map((g) => {
+        const { unit, title } = splitRoleName(g.representative.roleName);
+        const label = rowUnit && unit === rowUnit ? title : g.representative.roleName;
+        return renderNodeHtml({ ...g.representative, roleName: label }, 'normal', g.names);
+      })
+      .join('');
+
+  /** 上游總覽數字（收合時的摘要用） */
+  const buildUpstreamStats = (rows) => {
+    const units = new Set();
+    const roleIds = new Set();
+    const people = new Set();
+
+    // rows[列][關][群組] → flat(2) 取出所有群組
+    for (const group of rows.flat(2)) {
+      group.roleIds.forEach((id) => roleIds.add(id));
+      group.names.forEach((n) => people.add(n));
+      const { unit } = splitRoleName(group.representative.roleName);
+      if (unit) units.add(unit);
+    }
+    return { units: units.size, branches: rows.length, roles: roleIds.size, people: people.size };
+  };
+
+  /**
+   * 上游區塊：表格 + （分支多時）收合摘要與搜尋框。
+   *
+   * 各關一律靠左排、不留空欄——分支深度不齊時若靠右對齊，
+   * 淺分支左邊會出現大片空白、把內容推出畫面外。
+   */
+  const renderUpstreamBlockHtml = (rows) => {
+    if (rows.length === 0) return '';
+
+    const colCount = rows.reduce((max, levels) => Math.max(max, levels.length), 0);
+
+    const rowsHtml = rows.map((levels) => {
+      const rowUnit = getRowUnit(levels);
+
+      // levels[0] 最靠近目前節點 → 反轉後由外而內、由左而右排列
+      const ordered = [...levels].reverse();
+      const cells = ordered.map((groups, col) => {
+        const isDirectPrev = col === ordered.length - 1; // 最後一格 = 目前節點的上一關
+        const arrow = col === 0 ? '' : '<span class="ar-arrow">›</span>';
+        return `<td>${arrow}${isDirectPrev ? renderNodesCell(groups, rowUnit) : renderChipsCell(groups, rowUnit)}</td>`;
+      }).join('');
+
+      // 補足右側空白欄，讓「→ 本關」永遠在同一欄
+      const padding = '<td></td>'.repeat(colCount - ordered.length);
+
+      // 搜尋用關鍵字：單位 + 該列所有角色全名（不受單位收合影響）
+      const keywords = [rowUnit, ...levels.flat().map((g) => g.representative.roleName)]
+        .join(' ').toLowerCase().replace(/"/g, '');
+
+      return `<tr data-ar-search="${keywords}"><td class="ar-unit">${rowUnit || '—'}</td>${cells}${padding}<td class="ar-to">→</td></tr>`;
+    }).join('');
+
+    const tableHtml = `
+      <table class="ar-grid">
+        <thead><tr><th>單位</th><th colspan="${colCount + 1}">上游　由左至右 ＝ 送件方向</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    `;
+
+    // 分支數在門檻內 → 直接攤開，不加任何互動元件
+    if (rows.length <= UPSTREAM_FOLD_THRESHOLD) {
+      return `<div class="ar-up">${tableHtml}</div>`;
+    }
+
+    const { units, branches, roles, people } = buildUpstreamStats(rows);
+    const summary = `上游　${units} 個單位 · ${branches} 條分支 · ${roles} 個角色 · ${people} 位同仁`;
 
     return `
-      <div style="display:flex; align-items:center;">
-        <div class="${treeClass}" style="display:flex; flex-direction:column; gap:8px;">
-          ${parentsHtml}
+      <div class="ar-up">
+        <button type="button" class="ar-fold-btn" data-ar-fold>
+          <span class="ar-caret">▸</span>
+          <span>${summary}</span>
+          <span class="ar-fold-hint">（展開全部）</span>
+        </button>
+        <div data-ar-fold-body hidden>
+          <div class="ar-search-bar">
+            <input type="text" class="ar-search-box" data-ar-search-box placeholder="輸入單位或角色名稱過濾…">
+            <span class="ar-search-note" data-ar-search-note></span>
+          </div>
+          <div class="ar-up-scroll">${tableHtml}</div>
         </div>
-        <div class="ar-line"></div>
       </div>
     `;
   };
 
   /**
-   * [迴圈] 繪製下游 (一直線到終點)
+   * [迴圈] 收集下游節點 (一直線到終點)
+   * @returns {Array<{ role: object, state: 'normal'|'end'|'broken' }>}
    */
-  const buildDownstreamHtml = (startRoleId, roleMap) => {
-    let html = '';
+  const collectDownstreamNodes = (startRoleId, roleMap) => {
+    const nodes = [];
     let currentId = startRoleId;
     const visited = new Set();
 
@@ -368,23 +597,48 @@
       if (!currentId) break;
 
       if (visited.has(currentId)) {
-        html += `<div class="ar-line"></div>${renderNodeHtml({ roleName: '錯誤', roleId: '偵測到循環' }, 'broken')}`;
+        nodes.push({ role: { roleName: '錯誤', roleId: '偵測到循環' }, state: 'broken' });
         break;
       }
       visited.add(currentId);
 
       const nextRole = roleMap.get(currentId);
       if (!nextRole) {
-        html += `<div class="ar-line"></div>${renderNodeHtml({ roleName: '遺失節點', roleId: currentId }, 'broken')}`;
+        nodes.push({ role: { roleName: '遺失節點', roleId: currentId }, state: 'broken' });
         break;
       }
 
-      const state = nextRole.isChainEnd ? 'end' : 'normal';
-      html += `<div class="ar-line"></div>${renderNodeHtml(nextRole, state)}`;
+      nodes.push({ role: nextRole, state: nextRole.isChainEnd ? 'end' : 'normal' });
 
       if (nextRole.isChainEnd) break;
     }
-    return html;
+    return nodes;
+  };
+
+  /**
+   * 直式節點（共同段落用）：圓點 + 關卡標示 + 名稱，靠 .ar-vchain 的垂直線串起來。
+   *
+   * 上游各分支深度不一，絕對關數對不齊，因此標示改成相對目前節點：
+   * 本關 / 下 1 關 / 下 2 關 …
+   *
+   * @param {number} stepIdx - 0 = 目前這關
+   */
+  const renderVerticalNodeHtml = (role, state, stepIdx) => {
+    const step = stepIdx === 0 ? '本關' : `下${stepIdx}關`;
+    const { dotBg, dotBorder, titleColor, pulseClass, badge } = NODE_STYLE[state] ?? NODE_STYLE.normal;
+    const names      = role.holderNames || [];
+    const countBadge = names.length > 1 ? `<span class="ar-count-badge">${names.length}</span>` : '';
+    const tipData    = JSON.stringify({ names, roleId: role.roleId }).replace(/"/g, '&quot;');
+
+    return `
+      <div class="ar-vrow">
+        <div class="ar-vdot ${pulseClass}" style="width:14px; height:14px; border-radius:50%; background:${dotBg}; border:2px solid ${dotBorder}; flex-shrink:0;"></div>
+        <span class="ar-step">${step}</span>
+        <div style="font-size:15px; font-weight:700; color:${titleColor}; letter-spacing:0.5px; white-space:nowrap;">
+          <span class="ar-tip" data-ar-tip="${tipData}">${role.roleName}${countBadge}${badge}</span>
+        </div>
+      </div>
+    `;
   };
 
   /**
@@ -404,18 +658,27 @@
         : '<div style="color: #999; padding: 12px;">找不到此角色的資料，請確認是否已啟用。</div>';
     }
 
-    // 注意這裡傳入空的 new Set()，修正稍早的循環報錯問題
-    const upstreamHtml = buildUpstreamHtml(currentRoleId, roleMap, new Set());
-    const currentHtml = renderNodeHtml(currentRole, 'current');
-    const downstreamHtml = buildDownstreamHtml(currentRoleId, roleMap);
+    // 目前節點 + 下游（所有上游分支共用，只畫一次）
+    const commonNodes = [
+      { role: currentRole, state: 'current' },
+      ...collectDownstreamNodes(currentRoleId, roleMap),
+    ];
+    const commonHtml = `
+      <div class="ar-common">
+        <div class="ar-vchain">
+          ${commonNodes.map((n, i) => renderVerticalNodeHtml(n.role, n.state, i)).join('')}
+        </div>
+      </div>
+    `;
+
+    const rows = buildUpstreamMatrix(currentRoleId, roleMap);
 
     return `
       ${timelineStyles}
       <div style="padding: 16px 24px; overflow-x: auto; background: #fafafa; border-radius: 8px; border: 1px solid #f0f0f0;">
-        <div style="display: inline-flex; align-items: center;">
-          ${upstreamHtml}
-          ${currentHtml}
-          ${downstreamHtml}
+        <div class="ar-layout">
+          ${renderUpstreamBlockHtml(rows)}
+          ${commonHtml}
         </div>
       </div>
     `;
@@ -437,7 +700,7 @@
     if (slotEl) {
       slotEl.innerHTML = '';
       slotEl.appendChild(container);
-      bindTooltipEvents(container);
+      bindPreviewEvents(container);
       return;
     }
 
@@ -445,7 +708,7 @@
     const spaceEl = kintone.app.record.getSpaceElement('chain_preview');
     if (spaceEl) {
       spaceEl.insertBefore(container, spaceEl.firstChild);
-      bindTooltipEvents(container);
+      bindPreviewEvents(container);
       return;
     }
 
@@ -456,7 +719,7 @@
       document.querySelector('#record-gaia');
     if (formEl) {
       formEl.appendChild(container);
-      bindTooltipEvents(container);
+      bindPreviewEvents(container);
     }
   };
 
