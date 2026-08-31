@@ -22,6 +22,9 @@
  *
  * 【變更履歷】
  *   2026-09-01  Jimmy/Claude  初版（P8 Phase B）
+ *   2026-09-01  Jimmy/Claude  段類型切換時，一併清掉不屬於新段類型的欄位值
+ *                              （員工鏈段→清 role_id / 全員會簽；指定角色段→清 stop_at / skip），
+ *                              只淡化不清值 submit 會被 validateRouteSteps 擋
  */
 (() => {
   'use strict';
@@ -134,6 +137,36 @@
   /** 目前 <tr> 在 tbody 中的索引（對應 record.route_steps.value 的順序） */
   const rowIndex = (tr) => [...tr.parentElement.children].indexOf(tr);
 
+  /**
+   * 段類型切換後，清掉不屬於新段類型的欄位值。
+   * 只淡化不夠——值留著 submit 會被 validateRouteSteps 擋（「員工鏈段不需要指定角色」等）。
+   * stop_at（下拉）、skip（複選）是 kintone 原生小工具，用 get()/set() 清最可靠；
+   * 只有真的有殘值時才 set()（避免每次切換都重繪）。
+   */
+  const clearIrrelevantCells = (tr) => {
+    const cells = classifyCells(tr);
+    if (!cells) return;
+    const seg = checkedRadio(cells.segType);
+
+    const rec = kintone.app.record.get();
+    const v = rec.record[RTF.ROUTE_STEPS].value[rowIndex(tr)]?.value;
+    if (!v) return;
+
+    let dirty = false;
+    if (seg === SEG.EMPLOYEE_CHAIN) {
+      if (v[RSF.ROLE_ID].value) { v[RSF.ROLE_ID].value = ''; dirty = true; }
+      if (v[RSF.STEP_SIGNING_MODE].value === SSM.ALL) {
+        v[RSF.STEP_SIGNING_MODE].value = SSM.INHERIT; // 全員會簽只能配指定角色段
+        dirty = true;
+      }
+    } else if (seg === SEG.FIXED_ROLE) {
+      if (v[RSF.STOP_AT_TITLE_LEVEL].value) { v[RSF.STOP_AT_TITLE_LEVEL].value = ''; dirty = true; }
+      if ((v[RSF.SKIP_TITLE_LEVELS].value || []).length) { v[RSF.SKIP_TITLE_LEVELS].value = []; dirty = true; }
+    }
+
+    if (dirty) kintone.app.record.set(rec); // 會重繪 → observer 重掛
+  };
+
   /** 在「指定角色」格子掛上 RolePicker，隱藏原生輸入框 */
   const mountRolePicker = (tr, cells) => {
     const nativeInput = cells.roleId.querySelector('input.input-text-cybozu');
@@ -177,7 +210,10 @@
       mountRolePicker(tr, cells);
 
       cells.segType.querySelectorAll('input[type="radio"]').forEach((r) =>
-        r.addEventListener('change', () => applyRowVisibility(cells))
+        r.addEventListener('change', () => {
+          applyRowVisibility(cells);   // 立即淡化（在 set() 重繪前先給回饋）
+          clearIrrelevantCells(tr);    // 清掉不屬於新段類型的殘值
+        })
       );
       applyRowVisibility(cells);
     });

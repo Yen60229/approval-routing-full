@@ -317,6 +317,8 @@
     single_check（段類型／簽核模式）再用 radio value 區分；欄位重建 ID 會變、此法不受影響
   - submit 驗證 `validateRouteSteps`（純函式、13 項測試）：段類型↔欄位配對、「全員會簽」僅指定角色段、
     指定角色須存在於啟用中角色、至少一列
+  - 段類型切換時一併**清掉**不屬於新段類型的欄位值（員工鏈段→清 `role_id` / 全員會簽；
+    指定角色段→清 `stop_at` / `skip`）——只淡化不清值 submit 會被擋（2026-09-01 補）
   - 載入時比對 `stop_at_title_level`／`skip_title_levels` 選項 vs 685 `title_level`（集合比，不看順序），
     不一致跳一次 `showWarning`
   - ⚠️ **DOM 部分無自動測試**，上傳 736 後手動驗：列增刪會重掛 picker、選角色寫得進 role_id、
