@@ -16,6 +16,8 @@
  *   2026-04-18  Jimmy/Claude  初版建立
  *   2026-04-18  Jimmy/Claude  加入 TTL + Promise singleton 防 race condition
  *   2026-04-18  Jimmy/Claude  新增 clearEntryCache 供測試環境使用
+ *   2026-08-31  Jimmy/Claude  entryCache 補 TTL（60 秒）並新增 ensureFresh()
+ *                              一次清角色＋起點兩個快取（docs/05 評估 #1）
  */
 (() => {
   'use strict';
@@ -34,7 +36,13 @@
   /** @type {Promise<void>|null} 正在進行中的載入 promise；用來防止並發重複 fetch */
   let roleLoadPromise = null;
 
-  /** @type {Map<string, string|null>} employeeCode → entry_role_id */
+  /**
+   * 員工起點快取 TTL（毫秒）
+   * 比角色表短：起點表是按需單筆查詢，重查成本低，資料新鮮度優先
+   */
+  const ENTRY_CACHE_TTL_MS = 60 * 1000;
+
+  /** @type {Map<string, {value: string|null, at: number}>} employeeCode → 起點角色 + 寫入時戳 */
   const entryCache = new Map();
 
   /**
@@ -136,8 +144,11 @@
   };
 
   /**
-   * 強制重新載入角色快取（submit 前確保資料最新）
-   * 等價於 clearRoleCache() + loadAllRoles()
+   * 強制重新載入角色快取（不含起點快取）
+   *
+   * ⚠️ 一般情境請改用 `ensureFresh()`。只清角色不清起點，
+   *    「保證資料最新」的承諾會在鏈的第一關就落空。
+   *
    * @returns {Promise<void>}
    */
   const ensureFreshRoles = async () => {
@@ -145,16 +156,35 @@
     await loadAllRoles();
   };
 
+  /**
+   * 強制重新載入所有快取（submit 前確保資料最新）
+   *
+   * 角色與起點兩個快取一起清——buildChain 兩者都會用到，
+   * 只清一邊等於沒清（docs/05 評估 #1）。
+   *
+   * @returns {Promise<void>}
+   */
+  const ensureFresh = async () => {
+    clearRoleCache();
+    clearEntryCache();
+    await loadAllRoles();
+  };
+
   // --- 員工起點對照表 ---
 
   /**
-   * 依員工代碼查起點角色 ID（單筆快取）
+   * 依員工代碼查起點角色 ID（單筆快取 + TTL）
+   *
+   * ⚠️ 快取一定要有 TTL：HR 改了某員工的起點角色後，若快取永不失效，
+   *    開著的頁面會一直拿到舊值——而錯的是鏈的第一關，整條鏈都會錯。
+   *
    * @param {string} employeeCode - kintone 使用者代碼
    * @returns {Promise<string|null>} entry_role_id 或 null
    */
   const getEntryRoleId = async (employeeCode) => {
-    if (entryCache.has(employeeCode)) {
-      return entryCache.get(employeeCode);
+    const cached = entryCache.get(employeeCode);
+    if (cached && Date.now() - cached.at < ENTRY_CACHE_TTL_MS) {
+      return cached.value;
     }
 
     const resp = await api('/k/v1/records', 'GET', {
@@ -164,7 +194,7 @@
     });
 
     const entryRoleId = resp.records[0]?.[EF.ENTRY_ROLE_ID]?.value ?? null;
-    entryCache.set(employeeCode, entryRoleId);
+    entryCache.set(employeeCode, { value: entryRoleId, at: Date.now() });
     return entryRoleId;
   };
 
@@ -200,6 +230,7 @@
     getAllRoles,
     clearRoleCache,
     clearEntryCache,
+    ensureFresh,
     ensureFreshRoles,
     getEntryRoleId,
     getCurrentUserEntryRoleId,

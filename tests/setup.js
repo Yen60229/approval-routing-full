@@ -81,6 +81,7 @@ const Config = Object.freeze({
     ROLE_ID:          'role_id',
     STEP_NAME:        'step_name',
     EXPECTED_SIGNERS: 'expected_signers',
+    SIGNING_MODE:     'signing_mode',
     SIGNED_BY:        'signed_by',
     SIGNED_AT:        'signed_at',
   }),
@@ -93,6 +94,7 @@ const mockGetRole            = vi.fn();
 const mockGetAllRoles        = vi.fn();
 const mockClearRoleCache     = vi.fn();
 const mockEnsureFreshRoles   = vi.fn().mockResolvedValue(undefined);
+const mockEnsureFresh        = vi.fn().mockResolvedValue(undefined);
 const mockGetEntryRoleId     = vi.fn();
 const mockGetCurrentUserEntry= vi.fn();
 const mockGetGroupMembers    = vi.fn();
@@ -107,6 +109,7 @@ global.window.ApprovalRouting = {
     getRole:                  mockGetRole,
     getAllRoles:               mockGetAllRoles,
     clearRoleCache:           mockClearRoleCache,
+    ensureFresh:              mockEnsureFresh,
     ensureFreshRoles:         mockEnsureFreshRoles,
     getEntryRoleId:           mockGetEntryRoleId,
     getCurrentUserEntryRoleId: mockGetCurrentUserEntry,
@@ -138,6 +141,7 @@ global.__mocks__ = {
   getRole:           mockGetRole,
   getAllRoles:        mockGetAllRoles,
   clearRoleCache:    mockClearRoleCache,
+  ensureFresh:       mockEnsureFresh,
   ensureFreshRoles:  mockEnsureFreshRoles,
   getEntryRoleId:    mockGetEntryRoleId,
   getGroupMembers:   mockGetGroupMembers,

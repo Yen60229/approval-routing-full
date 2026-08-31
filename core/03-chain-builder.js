@@ -17,6 +17,9 @@
  *   2026-04-14  Jimmy/Claude  初版建立
  *   2026-04-18  Jimmy/Claude  重構為 3 階段，holder 解析改用 Promise.all 平行化
  *                              5 關鏈效能：1500ms → 300ms（估算）
+ *   2026-08-31  Jimmy/Claude  P8 前置修復（docs/05 評估報告）：
+ *                              #2 解析後有空簽核者的關卡即回 ok:false，不再放行
+ *                              #3 assembleChainStep 帶入 signing_mode 快照
  */
 (() => {
   'use strict';
@@ -33,7 +36,7 @@
     getRole,
     getEntryRoleId,
     getGroupMembers,
-    ensureFreshRoles,
+    ensureFresh,
   } = window.ApprovalRouting.ApiClient;
 
   const MAX_DEPTH = 20;
@@ -76,9 +79,28 @@
     [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
     [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
     [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
+    // 簽核模式快照：P8 流程管理逐關需要它決定行為（任一人簽 / 全員會簽）。
+    // 存快照而非跑到時再查角色表，省一次 API 且沒有時間差問題（docs/05 評估 #3）
+    [CF.SIGNING_MODE]:     { value: roleRecord[RF.SIGNING_MODE]?.value ?? SM.ANY },
     [CF.SIGNED_BY]:        { value: [] },
     [CF.SIGNED_AT]:        { value: '' },
   });
+
+  /**
+   * 找出解析後沒有任何簽核者的關卡（docs/05 評估 #2）
+   *
+   * 空關卡不能放行：單子會送出成功、鏈也寫得進子表格，但流程跑到該關就卡死，
+   * 而且申請人與 HR 都不會收到任何警告。健康檢查只能事後掃，擋不住已送出的單。
+   *
+   * @param {Object[]} roleRecords - 與 holderLists 同序
+   * @param {string[][]} holderLists
+   * @returns {string|null} 有空關卡時回錯誤訊息，全部正常回 null
+   */
+  const findEmptyHolderError = (roleRecords, holderLists) => {
+    const idx = holderLists.findIndex((list) => list.length === 0);
+    if (idx === -1) return null;
+    return `第 ${idx + 1} 關「${roleRecords[idx][RF.ROLE_NAME].value}」目前沒有任何簽核者，請聯絡 HR 確認角色設定`;
+  };
 
   /**
    * 走鏈結構（Phase 1）— 只讀快取、不解析 holder
@@ -130,7 +152,7 @@
    * @param {string} employeeCode - 申請人的 kintone 使用者代碼
    * @param {Object} [options]
    * @param {boolean} [options.forceFresh=false]
-   *   true 時強制重新載入角色快取；正式 submit 前建議設 true 避免用到過期資料
+   *   true 時強制重新載入角色與起點兩個快取；正式 submit 前建議設 true 避免用到過期資料
    * @returns {Promise<{
    *   ok: boolean,
    *   chain: Object[],   // approver_chain 子表格的 value 陣列
@@ -147,7 +169,7 @@
    */
   const buildChain = async (employeeCode, { forceFresh = false } = {}) => {
     try {
-      if (forceFresh) await ensureFreshRoles();
+      if (forceFresh) await ensureFresh();
 
       // 起點查詢
       const entryRoleId = await getEntryRoleId(employeeCode);
@@ -163,6 +185,12 @@
 
       // Phase 2：平行解析所有 holder（N 次 API 同時發）
       const holderLists = await Promise.all(walked.roleRecords.map(resolveHolders));
+
+      // 空簽核者即擋下，不讓單子帶著死關卡送出
+      const emptyError = findEmptyHolderError(walked.roleRecords, holderLists);
+      if (emptyError) {
+        return { ok: false, chain: [], error: emptyError };
+      }
 
       // Phase 3：組裝（純 CPU，瞬間完成）
       const chain = walked.roleRecords.map((rec, idx) =>

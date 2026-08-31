@@ -8,7 +8,13 @@
  *   - beforeEach 用 vi.resetAllMocks() 清除上一筆測試的實作與呼叫記錄
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ROLES_3_STEPS, ROLES_CIRCULAR, ROLES_BROKEN } from './helpers/mock-roles.js';
+import {
+  ROLES_3_STEPS,
+  ROLES_CIRCULAR,
+  ROLES_BROKEN,
+  ROLES_EMPTY_HOLDER,
+  ROLES_MIXED_SIGNING,
+} from './helpers/mock-roles.js';
 
 // 載入 IIFE（執行後掛上 window.ApprovalRouting.Engine）
 await import('../core/03-chain-builder.js');
@@ -17,7 +23,7 @@ const {
   getRole,
   getEntryRoleId,
   getGroupMembers,
-  ensureFreshRoles,
+  ensureFresh,
 } = global.__mocks__;
 
 const Engine = () => window.ApprovalRouting.Engine;
@@ -40,7 +46,7 @@ const setupGroupMembers = (membersMap) => {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  ensureFreshRoles.mockResolvedValue(undefined);
+  ensureFresh.mockResolvedValue(undefined);
 });
 
 // ── buildChain ──────────────────────────────────────────────────────────────
@@ -115,24 +121,24 @@ describe('buildChain()', () => {
     expect(error).toContain('ROLE_A');
   });
 
-  it('✅ forceFresh=true：應呼叫 ensureFreshRoles()', async () => {
+  it('✅ forceFresh=true：應呼叫 ensureFresh()（角色＋起點兩個快取都要清）', async () => {
     getEntryRoleId.mockResolvedValue('ROLE_001');
     setupRoleMap(ROLES_3_STEPS);
     setupGroupMembers({ 'g_rd_section': ['chen.wei'], 'g_ceo': ['wang.ceo'] });
 
     await Engine().buildChain('yamada.taro', { forceFresh: true });
 
-    expect(ensureFreshRoles).toHaveBeenCalledTimes(1);
+    expect(ensureFresh).toHaveBeenCalledTimes(1);
   });
 
-  it('✅ forceFresh 預設 false：不應呼叫 ensureFreshRoles()', async () => {
+  it('✅ forceFresh 預設 false：不應呼叫 ensureFresh()', async () => {
     getEntryRoleId.mockResolvedValue('ROLE_001');
     setupRoleMap(ROLES_3_STEPS);
     setupGroupMembers({ 'g_rd_section': ['chen.wei'], 'g_ceo': ['wang.ceo'] });
 
     await Engine().buildChain('yamada.taro');
 
-    expect(ensureFreshRoles).not.toHaveBeenCalled();
+    expect(ensureFresh).not.toHaveBeenCalled();
   });
 
   it('✅ holder 解析採 Promise.all 平行：getGroupMembers 應「同時」被呼叫', async () => {
@@ -161,6 +167,48 @@ describe('buildChain()', () => {
 
     expect(ok).toBe(false);
     expect(error).toContain('kintone API 連線逾時');
+  });
+
+  // ── docs/05 評估 #2：空簽核者不得放行 ──────────────────────────────────
+
+  it('✅ 某一關沒有簽核者：ok=false，且錯誤訊息指出是第幾關、哪個角色', async () => {
+    getEntryRoleId.mockResolvedValue('ROLE_E1');
+    setupRoleMap(ROLES_EMPTY_HOLDER);
+    setupGroupMembers({});
+
+    const { ok, chain, error } = await Engine().buildChain('user.empty');
+
+    expect(ok).toBe(false);
+    expect(chain).toHaveLength(0);
+    expect(error).toContain('第 2 關');
+    expect(error).toContain('第二關沒人');
+  });
+
+  it('✅ 空簽核者在群組角色時同樣擋下（群組成員被清空）', async () => {
+    getEntryRoleId.mockResolvedValue('ROLE_001');
+    setupRoleMap(ROLES_3_STEPS);
+    // 第 1 關的群組被 IT 清空成員，第 3 關正常
+    setupGroupMembers({ 'g_rd_section': [], 'g_ceo': ['wang.ceo'] });
+
+    const { ok, error } = await Engine().buildChain('yamada.taro');
+
+    expect(ok).toBe(false);
+    expect(error).toContain('第 1 關');
+    expect(error).toContain('研發課課長');
+  });
+
+  // ── docs/05 評估 #3：signing_mode 快照 ────────────────────────────────
+
+  it('✅ 子表格逐關帶入 signing_mode 快照，不是統一寫死', async () => {
+    getEntryRoleId.mockResolvedValue('ROLE_M1');
+    setupRoleMap(ROLES_MIXED_SIGNING);
+    setupGroupMembers({});
+
+    const { ok, chain } = await Engine().buildChain('user.mixed');
+
+    expect(ok).toBe(true);
+    expect(chain[0].signing_mode.value).toBe('任一人簽');
+    expect(chain[1].signing_mode.value).toBe('全員會簽');
   });
 
 });
