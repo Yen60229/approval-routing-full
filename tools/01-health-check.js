@@ -10,6 +10,7 @@
  *   3. 孤立角色 — 沒有任何角色指向它（且不是任何員工的起點）
  *   4. 空 holder — 角色沒有設定任何簽核者
  *   5. 無終點   — 鏈深度超過上限
+ *   6. 同名不一致 — 同名角色（＝同一關）的下一關／終點／簽核模式設定不同
  *
  * 【依賴】
  *   - core/01-config.js（Config）
@@ -18,6 +19,7 @@
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-08-31  Jimmy/Claude  新增第 6 條規則「同名角色設定一致性」（docs/05 評估 #4）
  */
 (() => {
   'use strict';
@@ -44,11 +46,12 @@
     const roleMap = await getAllRoles();
 
     const issues = {
-      circular:  [],   // 循環鏈
-      broken:    [],   // 斷鏈
-      noHolder:  [],   // 空 holder
-      orphan:    [],   // 孤立角色
-      noEnd:     [],   // 超過深度限制
+      circular:     [],   // 循環鏈
+      broken:       [],   // 斷鏈
+      noHolder:     [],   // 空 holder
+      orphan:       [],   // 孤立角色
+      noEnd:        [],   // 超過深度限制
+      inconsistent: [],   // 同名角色設定不一致
     };
 
     // 被指向的角色 ID（用來找孤立角色）
@@ -137,6 +140,43 @@
       }
     }
 
+    // --- Pass 4：同名角色設定一致性 ---
+    // 同名 role_name 就是同一關（docs/對話脈絡.md §9.2、§9.5），
+    // 一關有幾位簽核者就有幾筆記錄——同名多筆是正常的。
+    // 但既然是同一關，「下一關是誰」與「怎麼簽」就必須一致：
+    // 不一致時，下拉以 role_name 去重的假設就破了，選同一個名字會走出兩條不同的鏈，
+    // 而且畫面上完全看不出來。可用 tools/07-batch-next-role.js 統一。
+    const byRoleName = new Map();
+    for (const [roleId, rec] of roleMap) {
+      const name = rec[RF.ROLE_NAME].value;
+      if (!byRoleName.has(name)) byRoleName.set(name, []);
+      byRoleName.get(name).push({ roleId, rec });
+    }
+
+    /** 同一關的三個關鍵設定壓成一個可比對的字串 */
+    const settingKey = ({ rec }) => [
+      rec[RF.NEXT_ROLE_ID].value || '',
+      (rec[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END) ? 'END' : '',
+      rec[RF.SIGNING_MODE].value || '',
+    ].join('|');
+
+    for (const [roleName, group] of byRoleName) {
+      if (group.length < 2) continue;
+
+      const first = settingKey(group[0]);
+      if (group.every((g) => settingKey(g) === first)) continue;
+
+      issues.inconsistent.push({
+        roleName,
+        records: group.map(({ roleId, rec }) => ({
+          roleId,
+          nextRoleId:  rec[RF.NEXT_ROLE_ID].value || '（未設定）',
+          isEnd:       (rec[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END),
+          signingMode: rec[RF.SIGNING_MODE].value || '（未設定）',
+        })),
+      });
+    }
+
     return {
       totalRoles: roleMap.size,
       issues,
@@ -174,6 +214,12 @@
         <div style="margin-bottom:12px; color:#666;">共掃描 ${totalRoles} 個角色</div>
         ${section('🔴 循環鏈', '#c62828', issues.circular,
           (i) => `<li>從 <code>${i.startId}</code> 出發，在 <code>${i.loopAt}</code> 形成循環</li>`)}
+        ${section('🔴 同名角色設定不一致', '#c62828', issues.inconsistent,
+          (i) => `<li><strong>${i.roleName}</strong>（${i.records.length} 筆記錄，同一關卻設定不同）
+            <ul style="margin:4px 0 8px; padding-left:18px; color:#666; font-size:12px;">
+              ${i.records.map((r) => `<li><code>${r.roleId}</code>　下一關 <code>${r.nextRoleId}</code>${r.isEnd ? '　<strong>終點</strong>' : ''}　${r.signingMode}</li>`).join('')}
+            </ul>
+            <span style="font-size:12px; color:#888;">可用「批次設定下一關」工具統一</span></li>`)}
         ${section('🟠 斷鏈', '#e65100', issues.broken,
           (i) => `<li><strong>${i.roleName}</strong>（${i.roleId}）→ <code>${i.nextRoleId}</code> 不存在</li>`)}
         ${section('🟡 空簽核者', '#f57f17', issues.noHolder,
