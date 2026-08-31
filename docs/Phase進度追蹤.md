@@ -6,9 +6,48 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P8 Phase B — 程式碼完成，待 kintone 端驗證** — config / api-client / route-engine / role-picker / route-form 全部完成，**149 項測試全過**；App 736 已建好並驗證
-- **下一步動作**:(1) 上傳 736 的三支 core + `07-role-picker` + `apps/form-route/01-route-form.js`，手動驗 UI；(2) `03-next-role-dropdown.js` 重新上傳 685 手動回歸；(3) 測試 App 實測「更新執行者 API」→ 進 Phase C／D（產生器 + 標準 adapter）
-- **最後更新**:2026-09-01（Phase B 收尾：`core/07-role-picker.js` 抽共用 + `03` 改用它、`apps/form-route/01-route-form.js`（子表格逐列淡化 + RolePicker + submit 驗證）。App 736 schema 驗證通過、App ID 回填 736。**基石假設否決** → 執行者用「更新執行者 API」`PUT /k/v1/record/assignees`。149 項測試全過）
+- **當前 Phase**:**P8 Phase B — 程式碼完成，待 kintone 端驗證**
+- **最後更新**:2026-09-01
+- **git**:全部已 commit + push，工作區乾淨。最新 `f1f2e12 feat(P8): Phase B 路由引擎 + 表單路由設定表 UI`
+- **測試**:`npm test` → **149 項全過**（6 檔）
+
+### 換機接手指南（2026-09-01）
+
+**已完成（程式碼 + 測試）：**
+- `core/01-config.js` — `APP_ID.FORM_ROUTE_CONFIG = 736`、`ROUTE_FIELDS` / `ROUTE_STEP_FIELDS` /
+  `SEGMENT_TYPE_OPTIONS` / `STEP_SIGNING_MODE_OPTIONS` / `REJECT_TARGET_OPTIONS` / `ADAPTER_FIELDS`
+- `core/02-api-client.js` — `getRouteConfig` / `clearRouteConfigCache` 全量快取；`ensureFresh` 一併清路由快取
+- `core/03-chain-builder.js` — 抽出 `walkSegment` / `finalizeChain`（給 06 共用），`walkChainStructure` 降薄包裝
+- `core/06-route-engine.js` — `buildChainForForm`（逐段展開；查無路由 fallback 全鏈）
+- `core/07-role-picker.js` — 可搜尋分組下拉共用元件；`apps/role-definition/03-next-role-dropdown.js` 已改用它
+- `apps/form-route/01-route-form.js` — 736 新增／編輯頁（子表格逐列淡化 + `role_id` 掛 RolePicker + `validateRouteSteps`）
+- App 736 已建好，schema 逐欄驗證通過（`skip_title_levels` 實為 `MULTI_SELECT`，引擎相容）
+- **執行者機制定案**：`process.proceed` 直寫 `current_approvers` 不穩（已知行為）→ 改用
+  `PUT /k/v1/record/assignees`（登入者身分呼叫）為權威 + `detail.show` 安全網。詳見 `docs/06` §5.3、對話脈絡 §9.8
+
+**待辦（都在 kintone 端，換機後可繼續）：**
+1. 上傳 736：`core/01,05,04,02,03,06,07` + `apps/form-route/01-route-form.js` → 手動驗
+   （列增刪重掛 picker、選角色寫得進 `role_id`、切段類型會淡化、submit 擋錯、職稱不同步會警告）
+2. 重上 685：`core/01~07` + 既有 7 支 → `03` 下拉手動回歸（選取／亂打還原／切換後 Timeline 刷新）
+3. 測試 App 實測「更新執行者 API」：狀態已設執行者時 `PUT /k/v1/record/assignees` 帶 revision 換人 → 該人能執行動作
+4. P2 舊待辦：core 3 支 + `apps/employee-entry` 2 支 + `tools/05` 上傳 686 測試（與 P8 不互相阻塞）
+
+**一個待你決定的設計點：**
+- 指定角色段的 RolePicker 依 role_name 去重、寫**第一筆** role_id，`buildChainForForm` 解析成**單一**簽核者。
+  若某職能關要「同名多人全簽」→ 需擴充引擎（fixed-role 段展開同名 role_id）。**現在需要嗎？**
+
+**驗證通過後 → Phase C／D**：`tools/10-status-generator.js`、`adapters/00-standard-adapter.js`（見下方 Phase C／D 區塊）
+
+### kintone JS 上傳順序（2026-09-01 對過，正確）
+
+| App | 順序 |
+|-----|------|
+| **685** | `coding_tools` → `core/01,05,04,02,03,06,07` → `apps/role-definition/01~07` → `tools/04,05,06,08,09` |
+| **686** | `coding_tools` → `core/05,04,01,02,03` → `apps/employee-entry/01,02` → `tools/05,07` |
+| **736** | `coding_tools` → `core/01,05,04,02,03,06,07` → `apps/form-route/01-route-form` |
+
+> 硬性規則：`core/07` 要在 `apps/*/03` 與 `apps/form-route/01` 之前；`core/03` 要在 `core/06` 之前（core 一律先載，自動滿足）。
+> 736 的 `core/03` + `core/06` 目前用不到（`01-route-form` 只用 `getAllRoles` + RolePicker），留著無害，日後加即時預覽會用到。
 
 ---
 
