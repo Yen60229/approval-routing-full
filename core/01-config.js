@@ -11,6 +11,9 @@
  *   2026-04-14  Jimmy/Claude  初版建立
  *   2026-05-01  Jimmy/Claude  移除 TITLE_LEVEL_OPTIONS 硬編碼，改由各使用者
  *                              透過 kintone.app.getFormFields() 動態讀取選項
+ *   2026-08-31  Jimmy/Claude  CHAIN_FIELDS 新增 SIGNING_MODE（docs/05 評估 #3）：
+ *                              P8 流程管理需要逐關知道簽核模式，趁子表格尚未嵌入
+ *                              任何申請 App 補上，此時改結構是零成本
  */
 (() => {
   'use strict';
@@ -67,6 +70,7 @@
     ROLE_ID:          'role_id',
     STEP_NAME:        'step_name',
     EXPECTED_SIGNERS: 'expected_signers',
+    SIGNING_MODE:     'signing_mode',
     SIGNED_BY:        'signed_by',
     SIGNED_AT:        'signed_at',
   });
