@@ -160,3 +160,83 @@ describe('getEntryRoleId() 單筆快取', () => {
   });
 
 });
+
+// ── 表單路由設定快取（loadAllRouteConfigs / getRouteConfig）─────────────────
+
+describe('getRouteConfig() 全量快取', () => {
+
+  const MOCK_ROUTE_RECORDS = [
+    { form_app_id: { value: '1001' }, form_name: { value: '採購申請單' }, is_active: { value: ['啟用中'] }, route_steps: { value: [] } },
+    { form_app_id: { value: '1002' }, form_name: { value: '請假單' },   is_active: { value: ['啟用中'] }, route_steps: { value: [] } },
+  ];
+
+  beforeEach(() => {
+    client().clearRouteConfigCache();
+    kintoneApi.mockResolvedValue({ records: MOCK_ROUTE_RECORDS });
+  });
+
+  it('✅ 第一次查詢：呼叫 kintone.api 一次', async () => {
+    await client().getRouteConfig(1001);
+    expect(kintoneApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('✅ 快取命中：查兩個不同表單只呼叫一次 API', async () => {
+    await client().getRouteConfig(1001);
+    await client().getRouteConfig(1002);
+    expect(kintoneApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('✅ 依 App ID 回傳正確記錄（數值與字串皆可）', async () => {
+    expect((await client().getRouteConfig(1001)).form_name.value).toBe('採購申請單');
+    expect((await client().getRouteConfig('1002')).form_name.value).toBe('請假單');
+  });
+
+  it('✅ 查無該表單時回傳 null', async () => {
+    expect(await client().getRouteConfig(9999)).toBeNull();
+  });
+
+  it('✅ clearRouteConfigCache 後重新 fetch', async () => {
+    await client().getRouteConfig(1001);
+    client().clearRouteConfigCache();
+    await client().getRouteConfig(1001);
+    expect(kintoneApi).toHaveBeenCalledTimes(2);
+  });
+
+  it('✅ TTL 5 分鐘內不重新 fetch、超過後重新 fetch', async () => {
+    vi.useFakeTimers();
+    await client().getRouteConfig(1001);
+    vi.advanceTimersByTime(4 * 60 * 1000);
+    await client().getRouteConfig(1001);
+    expect(kintoneApi).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(2 * 60 * 1000); // 累計 6 分鐘
+    await client().getRouteConfig(1001);
+    expect(kintoneApi).toHaveBeenCalledTimes(2);
+  });
+
+  it('✅ 並發呼叫 Promise singleton：只觸發一次 API', async () => {
+    await Promise.all([
+      client().getRouteConfig(1001),
+      client().getRouteConfig(1002),
+      client().getRouteConfig(1001),
+    ]);
+    expect(kintoneApi).toHaveBeenCalledTimes(1);
+  });
+
+  it('✅ 只載入啟用中的記錄（query 帶 is_active 條件）', async () => {
+    await client().getRouteConfig(1001);
+    const [, , body] = kintoneApi.mock.calls[0];
+    expect(body.query).toContain('is_active in ("啟用中")');
+  });
+
+  it('✅ ensureFresh() 會一併清路由快取', async () => {
+    await client().getRouteConfig(1001);          // 載入路由快取
+    kintoneApi.mockResolvedValue({ records: [] }); // ensureFresh 內的 loadAllRoles
+    await client().ensureFresh();
+    kintoneApi.mockResolvedValue({ records: MOCK_ROUTE_RECORDS });
+    await client().getRouteConfig(1001);          // 快取已清 → 再次 fetch
+    // 1: 首次 getRouteConfig，2: ensureFresh 的 loadAllRoles，3: 重新 getRouteConfig
+    expect(kintoneApi).toHaveBeenCalledTimes(3);
+  });
+
+});

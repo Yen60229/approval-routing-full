@@ -18,11 +18,14 @@
  *   2026-04-18  Jimmy/Claude  新增 clearEntryCache 供測試環境使用
  *   2026-08-31  Jimmy/Claude  entryCache 補 TTL（60 秒）並新增 ensureFresh()
  *                              一次清角色＋起點兩個快取（docs/05 評估 #1）
+ *   2026-08-31  Jimmy/Claude  P8 Phase B：新增 form_route_config 全量快取
+ *                              （getRouteConfig / clearRouteConfigCache，比照 loadAllRoles
+ *                              三道防線）；ensureFresh 一併清路由快取
  */
 (() => {
   'use strict';
 
-  const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, CHECKBOX } =
+  const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, ROUTE_FIELDS: RCF, CHECKBOX } =
     window.ApprovalRouting.Config;
 
   // --- 快取 ---
@@ -44,6 +47,19 @@
 
   /** @type {Map<string, {value: string|null, at: number}>} employeeCode → 起點角色 + 寫入時戳 */
   const entryCache = new Map();
+
+  /**
+   * 表單路由設定快取 TTL（毫秒）— 比照角色表 5 分鐘（docs/06 §4.1）
+   * 路由表約 40-50 筆，全量快取；由 IT／表單窗口在部署期維護，變動頻率低
+   */
+  const ROUTE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  /** @type {Map<string, Object>} form_app_id（字串）→ route config record */
+  const routeConfigCache = new Map();
+  /** @type {number} 路由快取載入時間戳；0 表示未載入 */
+  let routeConfigLoadedAt = 0;
+  /** @type {Promise<void>|null} 進行中的載入 promise，防並發重複 fetch */
+  let routeConfigLoadPromise = null;
 
   /**
    * 底層 REST API 呼叫
@@ -159,14 +175,16 @@
   /**
    * 強制重新載入所有快取（submit 前確保資料最新）
    *
-   * 角色與起點兩個快取一起清——buildChain 兩者都會用到，
-   * 只清一邊等於沒清（docs/05 評估 #1）。
+   * 角色、起點、路由三個快取一起清——buildChain / buildChainForForm 都會用到，
+   * 只清一部分等於沒清（docs/05 評估 #1）。路由表在部署期可能剛被重新部署，
+   * submit 時也要拿到最新的段設定。
    *
    * @returns {Promise<void>}
    */
   const ensureFresh = async () => {
     clearRoleCache();
     clearEntryCache();
+    clearRouteConfigCache();
     await loadAllRoles();
   };
 
@@ -207,6 +225,75 @@
     return getEntryRoleId(userCode);
   };
 
+  // --- 表單路由設定表（form_route_config, App 3）---
+
+  /**
+   * 全量載入啟用中的路由設定到 routeConfigCache
+   *
+   * 三道防線與 loadAllRoles 相同：
+   *   1. 快取仍新鮮（TTL 內）→ 直接 return
+   *   2. 有其他呼叫正在 fetch → 複用該 promise（防並發 race condition）
+   *   3. 真正執行 fetch → 寫入快取 + 更新時間戳
+   *
+   * 只載入 is_active =「啟用中」的記錄：未啟用的表單在 getRouteConfig 視同查無，
+   * adapter 會走 fallback 全鏈（docs/06 §4）。
+   */
+  const loadAllRouteConfigs = () => {
+    const fresh =
+      routeConfigLoadedAt > 0 && Date.now() - routeConfigLoadedAt < ROUTE_CACHE_TTL_MS;
+    if (fresh) return Promise.resolve();
+    if (routeConfigLoadPromise) return routeConfigLoadPromise;
+
+    routeConfigLoadPromise = (async () => {
+      try {
+        routeConfigCache.clear();
+
+        let offset = 0;
+        const limit = 500;
+
+        while (true) {
+          const resp = await api('/k/v1/records', 'GET', {
+            app: APP_ID.FORM_ROUTE_CONFIG,
+            query: `${RCF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${limit} offset ${offset}`,
+          });
+
+          for (const rec of resp.records) {
+            // key 統一用字串：form_app_id 是數值欄，adapter 端以 kintone.app.getId() 查詢
+            routeConfigCache.set(String(rec[RCF.FORM_APP_ID].value), rec);
+          }
+
+          if (resp.records.length < limit) break;
+          offset += limit;
+        }
+
+        routeConfigLoadedAt = Date.now();
+      } finally {
+        routeConfigLoadPromise = null;
+      }
+    })();
+
+    return routeConfigLoadPromise;
+  };
+
+  /**
+   * 依申請 App ID 取得路由設定（從快取，未載入時先全量載入）
+   * @param {number|string} formAppId
+   * @returns {Promise<Object|null>} route config record，查無或未啟用時回 null
+   */
+  const getRouteConfig = async (formAppId) => {
+    await loadAllRouteConfigs();
+    return routeConfigCache.get(String(formAppId)) ?? null;
+  };
+
+  /**
+   * 清除路由設定快取（測試環境 / 部署後 / ensureFresh 內用）
+   */
+  const clearRouteConfigCache = () => {
+    routeConfigCache.clear();
+    routeConfigLoadedAt = 0;
+    routeConfigLoadPromise = null;
+  };
+
   // --- 群組成員 ---
 
   /**
@@ -234,6 +321,8 @@
     ensureFreshRoles,
     getEntryRoleId,
     getCurrentUserEntryRoleId,
+    getRouteConfig,
+    clearRouteConfigCache,
     getGroupMembers,
   });
 })();

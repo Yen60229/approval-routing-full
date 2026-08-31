@@ -44,6 +44,7 @@ const Config = Object.freeze({
   APP_ID: Object.freeze({
     ROLE_DEFINITION: 685,
     EMPLOYEE_ENTRY:  686,
+    FORM_ROUTE_CONFIG: 700,   // 測試用假 App ID（正式環境為 736，見 core/01-config.js；mock 不打真 API，值任意）
   }),
   ROLE_FIELDS: Object.freeze({
     ROLE_ID:      'role_id',
@@ -75,6 +76,44 @@ const Config = Object.freeze({
     ENTRY_ROLE_ID: 'entry_role_id',
     IS_ACTIVE:     'is_active',
   }),
+  ROUTE_FIELDS: Object.freeze({
+    FORM_APP_ID:   'form_app_id',
+    FORM_NAME:     'form_name',
+    IS_ACTIVE:     'is_active',
+    ROUTE_STEPS:   'route_steps',
+    MAX_DEPTH:     'max_depth',
+    CANCEL_GROUPS: 'cancel_groups',
+    REJECT_TARGET: 'reject_target',
+    DEPLOYED_AT:   'deployed_at',
+    DEPLOYED_HASH: 'deployed_hash',
+  }),
+  ROUTE_STEP_FIELDS: Object.freeze({
+    STEP_NO:             'step_no',
+    SEGMENT_TYPE:        'segment_type',
+    STOP_AT_TITLE_LEVEL: 'stop_at_title_level',
+    SKIP_TITLE_LEVELS:   'skip_title_levels',
+    ROLE_ID:             'role_id',
+    STEP_SIGNING_MODE:   'step_signing_mode',
+  }),
+  SEGMENT_TYPE_OPTIONS: Object.freeze({
+    EMPLOYEE_CHAIN: '員工鏈段',
+    FIXED_ROLE:     '指定角色段',
+  }),
+  STEP_SIGNING_MODE_OPTIONS: Object.freeze({
+    INHERIT: '（沿用角色表）',
+    ANY:     '任一人簽',
+    ALL:     '全員會簽',
+  }),
+  REJECT_TARGET_OPTIONS: Object.freeze({
+    APPLICANT: '退回申請人',
+    PREV_STEP: '退回上一關',
+  }),
+  ADAPTER_FIELDS: Object.freeze({
+    APPROVER_CHAIN:    'approver_chain',
+    CURRENT_APPROVERS: 'current_approvers',
+    CURRENT_STEP:      'current_step',
+    TOTAL_STEPS:       'total_steps',
+  }),
   CHAIN_FIELDS: Object.freeze({
     TABLE:            'approver_chain',
     STEP_NO:          'step_no',
@@ -98,6 +137,8 @@ const mockEnsureFresh        = vi.fn().mockResolvedValue(undefined);
 const mockGetEntryRoleId     = vi.fn();
 const mockGetCurrentUserEntry= vi.fn();
 const mockGetGroupMembers    = vi.fn();
+const mockGetRouteConfig     = vi.fn();
+const mockClearRouteConfigCache = vi.fn();
 
 // ─── 掛到全域 ─────────────────────────────────────────────────────────────
 
@@ -114,6 +155,8 @@ global.window.ApprovalRouting = {
     getEntryRoleId:           mockGetEntryRoleId,
     getCurrentUserEntryRoleId: mockGetCurrentUserEntry,
     getGroupMembers:          mockGetGroupMembers,
+    getRouteConfig:           mockGetRouteConfig,
+    clearRouteConfigCache:    mockClearRouteConfigCache,
   },
   // Engine 由 03-chain-builder.js 載入後填入
 };
@@ -145,5 +188,7 @@ global.__mocks__ = {
   ensureFreshRoles:  mockEnsureFreshRoles,
   getEntryRoleId:    mockGetEntryRoleId,
   getGroupMembers:   mockGetGroupMembers,
+  getRouteConfig:    mockGetRouteConfig,
+  clearRouteConfigCache: mockClearRouteConfigCache,
   showWarning:       mockShowWarning,
 };

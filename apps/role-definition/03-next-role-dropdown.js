@@ -11,6 +11,7 @@
  * 【依賴】
  *   - core/01-config.js（Config）
  *   - core/04-utils.js（Utils）
+ *   - core/07-role-picker.js（RolePicker）← 需排在本檔之前載入
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
@@ -20,6 +21,9 @@
  *                              同名角色不論存哪個 role_id，開啟記錄都能正確顯示。
  *   2026-07-12  Jimmy/Claude  submit 驗證改為累積錯誤（pushSubmitError），彈窗交由
  *                              最後執行的 07 統一彙整
+ *   2026-09-01  Jimmy/Claude  可搜尋下拉 UI 抽到 core/07-role-picker.js 共用（form-route
+ *                              子表格也要用）。本檔只保留「抓角色 + 綁 kintone 欄位 + 事件」，
+ *                              UI 交給 RolePicker；順帶多了 ↑↓／Enter／Esc 鍵盤操作
  */
 (() => {
   'use strict';
@@ -78,140 +82,40 @@
   };
 
   /**
-   * 建立可搜尋下拉元件 DOM
-   * 以 input + 浮動清單取代原生 select，支援打字過濾
-   * @param {Array} roles
+   * 建立「下一關角色」可搜尋下拉（UI 由 core/07-role-picker.js 提供）
+   *
+   * 本檔只負責：把角色清單餵給 RolePicker、選到之後同步寫入 next_role_id 並刷新預覽。
+   * 識別仍以 role_name 為準（role_id 僅在寫入時使用），同名去重見 fetchActiveRoles。
+   *
+   * @param {Array<{roleId: string, roleName: string, unitName: string}>} roles
    * @param {Map<string, string>} nameById - 所有啟用角色的 role_id → role_name 對照
-   * @param {string} currentRoleId - 當前記錄的 role_id（用來同步 kintone 欄位與刷新預覽）
+   * @param {string} currentRoleId - 當前記錄的 role_id（刷新預覽用）
    * @param {string} currentValue  - 目前的 next_role_id
-   * @returns {HTMLElement} container
+   * @returns {HTMLElement} container（已帶 CONTAINER_ID）
    */
   const buildDropdownUI = (roles, nameById, currentRoleId, currentValue) => {
-    const container = document.createElement('div');
-    container.id = CONTAINER_ID;
-    container.style.cssText = 'padding: 8px 0;';
+    const picker = window.ApprovalRouting.RolePicker.create({
+      options: roles.map((r) => ({ id: r.roleId, name: r.roleName, group: r.unitName })),
+      initialId: currentValue,
+      initialName: nameById.get(currentValue) || '',
+      labelText: '下一關角色：',
+      placeholder: '輸入角色名稱搜尋…',
+      emptyText: '找不到符合的角色',
+      ungroupedLabel: UNGROUPED_LABEL,
+      inputId: DROPDOWN_ID,
+      onSelect: async (opt) => {
+        // 同步寫入 kintone 欄位
+        const rec = kintone.app.record.get();
+        rec.record[F.NEXT_ROLE_ID].value = opt.id;
+        kintone.app.record.set(rec);
 
-    const label = document.createElement('label');
-    label.textContent = '下一關角色：';
-    label.style.cssText = 'font-weight: bold; font-size: 14px; display: block; margin-bottom: 6px;';
-
-    // input + 浮動清單的外層（position:relative 讓清單能絕對定位）
-    const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position: relative; display: inline-block;';
-
-    // 搜尋輸入框
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.id = DROPDOWN_ID;
-    input.placeholder = '輸入角色名稱搜尋…';
-    input.autocomplete = 'off';
-    input.style.cssText =
-      'font-size: 14px; padding: 6px 12px; min-width: 280px; ' +
-      'border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;';
-
-    // 初始顯示目前選中的角色名稱（以 role_name 為準，即使存的 role_id 已被去重也找得到）
-    const currentName = nameById.get(currentValue) || '';
-    if (currentName) input.value = currentName;
-
-    // 浮動選項清單
-    const panel = document.createElement('div');
-    panel.style.cssText =
-      'position: absolute; top: calc(100% + 2px); left: 0; min-width: 280px; ' +
-      'max-height: 240px; overflow-y: auto; background: #fff; ' +
-      'border: 1px solid #ccc; border-radius: 4px; ' +
-      'box-shadow: 0 4px 12px rgba(0,0,0,.12); z-index: 9999; display: none;';
-
-    // 以 role_name 為選取識別（role_id 僅在寫入 next_role_id 時使用）
-    let selectedName = currentName;
-
-    /** 依關鍵字重繪清單（依 unitName 分組，組與組之間加單位標題） */
-    const renderItems = (keyword) => {
-      const filtered = keyword
-        ? roles.filter((r) => r.roleName.includes(keyword))
-        : roles;
-
-      panel.innerHTML = '';
-
-      if (filtered.length === 0) {
-        const empty = document.createElement('div');
-        empty.textContent = '找不到符合的角色';
-        empty.style.cssText = 'padding: 10px 12px; color: #999; font-size: 14px;';
-        panel.appendChild(empty);
-        return;
-      }
-
-      // roles 已依 unitName 排序，同單位連續，遇到單位切換就插入分組標題
-      let currentUnit = null;
-
-      for (const role of filtered) {
-        if (role.unitName !== currentUnit) {
-          currentUnit = role.unitName;
-          const header = document.createElement('div');
-          header.textContent = currentUnit;
-          header.style.cssText =
-            'padding: 6px 12px; font-size: 12px; font-weight: 700; color: #555; ' +
-            'background: #f5f5f5; position: sticky; top: 0; z-index: 1;';
-          panel.appendChild(header);
-        }
-
-        const item = document.createElement('div');
-        item.textContent = role.roleName;
-        item.style.cssText =
-          'padding: 8px 12px 8px 20px; font-size: 14px; cursor: pointer; ' +
-          (role.roleName === selectedName ? 'background:#e0e7ff; font-weight:600;' : '');
-
-        item.addEventListener('mouseenter', () => { item.style.background = '#f0f4ff'; });
-        item.addEventListener('mouseleave', () => {
-          item.style.background = role.roleName === selectedName ? '#e0e7ff' : '';
-        });
-
-        // mousedown 優先於 blur，用 preventDefault 確保 blur 之前完成選取
-        item.addEventListener('mousedown', async (e) => {
-          e.preventDefault();
-          selectedName = role.roleName;
-          input.value = role.roleName;
-          panel.style.display = 'none';
-
-          // 同步寫入 kintone 欄位
-          const rec = kintone.app.record.get();
-          rec.record[F.NEXT_ROLE_ID].value = role.roleId;
-          kintone.app.record.set(rec);
-
-          // 通知 chain-preview 刷新（kintone.app.record.set 不觸發 change 事件）
-          await window.ApprovalRouting.ChainPreview?.refresh(currentRoleId);
-        });
-
-        panel.appendChild(item);
-      }
-    };
-
-    input.addEventListener('focus', () => {
-      renderItems(input.value);
-      panel.style.display = 'block';
+        // 通知 chain-preview 刷新（kintone.app.record.set 不觸發 change 事件）
+        await window.ApprovalRouting.ChainPreview?.refresh(currentRoleId);
+      },
     });
 
-    input.addEventListener('input', () => {
-      renderItems(input.value);
-      panel.style.display = 'block';
-    });
-
-    input.addEventListener('blur', () => {
-      // 延遲讓 mousedown 先執行完
-      setTimeout(() => {
-        panel.style.display = 'none';
-        // 若輸入的文字不符合任何角色，還原成最後一次有效選取
-        const matched = roles.find((r) => r.roleName === input.value);
-        if (!matched) {
-          input.value = selectedName || '';
-        }
-      }, 200);
-    });
-
-    wrapper.appendChild(input);
-    wrapper.appendChild(panel);
-    container.appendChild(label);
-    container.appendChild(wrapper);
-    return container;
+    picker.el.id = CONTAINER_ID;
+    return picker.el;
   };
 
   /**

@@ -6,9 +6,9 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P8 起步** — Phase A（引擎前置修復 4 項）已完成；P2 的上傳測試仍待辦，兩者不互相阻塞
-- **下一步動作**:Jimmy 依 `docs/02` App 3 規格手動建立 `form_route_config` App → 回填 App ID 至 `core/01-config.js` → 進 Phase B（路由引擎 + 設定表 UI）
-- **最後更新**:2026-08-31（P8 設計定案並升版 docs/06 至 1.1；Phase A 四項修復完成、91 項測試全過）
+- **當前 Phase**:**P8 Phase B — 程式碼完成，待 kintone 端驗證** — config / api-client / route-engine / role-picker / route-form 全部完成，**149 項測試全過**；App 736 已建好並驗證
+- **下一步動作**:(1) 上傳 736 的三支 core + `07-role-picker` + `apps/form-route/01-route-form.js`，手動驗 UI；(2) `03-next-role-dropdown.js` 重新上傳 685 手動回歸；(3) 測試 App 實測「更新執行者 API」→ 進 Phase C／D（產生器 + 標準 adapter）
+- **最後更新**:2026-09-01（Phase B 收尾：`core/07-role-picker.js` 抽共用 + `03` 改用它、`apps/form-route/01-route-form.js`（子表格逐列淡化 + RolePicker + submit 驗證）。App 736 schema 驗證通過、App ID 回填 736。**基石假設否決** → 執行者用「更新執行者 API」`PUT /k/v1/record/assignees`。149 項測試全過）
 
 ---
 
@@ -242,17 +242,56 @@
   - 同名＝同一關，`next_role_id`／`is_chain_end`／`signing_mode` 三者不一致列 🔴，可用 tools/07 統一
 - [x] 測試補回歸案例：空簽核者（個人／群組兩種）、`signing_mode` 逐關快照
 
-#### ⬜ Phase B — 路由設定層（下一輪）
-- [ ] **Jimmy 手動建立 `form_route_config` App**（規格見 `docs/02` App 3）→ 回填 App ID
-- [ ] `core/01-config.js` — 新增 `APP_ID.FORM_ROUTE_CONFIG`、`ROUTE_FIELDS`、`ROUTE_STEP_FIELDS`、`ADAPTER_FIELDS`
-- [ ] `core/02-api-client.js` — `getRouteConfig()`，比照 `loadAllRoles()` 的三道防線（TTL + Promise singleton）
-- [ ] `core/06-route-engine.js` — `walkSegment()` + `buildChainForForm()`
-  - `walkSegment` 由 `walkChainStructure()` 重構抽出，沿鏈與循環偵測不重寫一套
+#### 🔄 Phase B — 路由設定層（進行中）
+- [x] **Jimmy 手動建立 `form_route_config` App** = **App 736** ✅ 2026-09-01
+      schema 逐欄驗證通過（主表 9 欄 + `form_app_id` unique + 子表格 6 欄，型別／選項全對，
+      `stop_at_title_level`／`skip_title_levels` 選項＝685 `title_level`）；`skip_title_levels`
+      實建為 `MULTI_SELECT`（值為字串陣列，引擎相容）。`APP_ID.FORM_ROUTE_CONFIG` 已回填 736
+- [x] `core/01-config.js` — 新增 `APP_ID.FORM_ROUTE_CONFIG`、`ROUTE_FIELDS`、`ROUTE_STEP_FIELDS`、
+      `SEGMENT_TYPE_OPTIONS`、`STEP_SIGNING_MODE_OPTIONS`、`REJECT_TARGET_OPTIONS`、`ADAPTER_FIELDS` ✅ 2026-08-31
+- [x] `core/02-api-client.js` — `getRouteConfig()` / `clearRouteConfigCache()`，比照 `loadAllRoles()`
+      三道防線（TTL 5 分鐘 + Promise singleton + 全量快取，key＝form_app_id 字串）；
+      `ensureFresh()` 一併清路由快取 ✅ 2026-08-31
+- [x] `core/03-chain-builder.js` — 沿鏈走訪抽為 `walkSegment()`（支援 `stop_at_title_level` /
+      `skip_title_levels` / 跨段共用 `visited`）；Phase 2+3 抽為 `finalizeChain()`；
+      `walkChainStructure` 改為薄包裝，行為不變（15 項既有測試全過）✅ 2026-08-31
+- [x] `core/06-route-engine.js` — `buildChainForForm()` ✅ 2026-08-31
+  - 逐段展開：員工鏈段呼叫 `walkSegment`、指定角色段直接 `getRole`
   - `skip_title_levels` 命中者**照走 next_role_id，只是不 push**——跳關不是斷鏈
-  - `visited` Set 跨段共用；查無路由 → fallback 走 `buildChain()`，向下相容
-- [ ] `apps/form-route/01-route-form.js` — 段類型條件顯示 + 角色下拉（從 03-next-role-dropdown 抽共用）
-- [ ] ⚠️ **驗證基石假設**：proceed 裡寫 `current_approvers` 並 return event，狀態轉移後 assignee 是否用新值
-  - 用十行 JS 在測試 App 實測。**不成立的話 Phase D 的 proceed 要整個重寫**
+  - `visited` Set 跨段共用；查無路由或未啟用 → fallback 走 `buildChain()`，向下相容
+  - docs/06 §4 兩個待決點採提案傾向：連續兩關同一人**保留兩關**、個人段起點即截止職稱則**個人段為空**
+  - 員工鏈段指定「全員會簽」直接回 `ok:false`（位置浮動，產生器生不出 ALL 狀態，docs/06 §5.4）
+  - `step_signing_mode` 非「沿用角色表」時，覆寫該段每一關的 `signing_mode` 快照
+- [x] `core/07-role-picker.js` — 可搜尋分組下拉元件，由 `03-next-role-dropdown.js` 抽出共用
+      （方案 A）✅ 2026-09-01
+  - 純 UI，不認得 kintone 欄位；呼叫端給 options + onSelect
+  - `03-next-role-dropdown.js` 改用它（保留抓角色 / 綁 next_role_id / 事件），順帶多了 ↑↓／Enter／Esc
+  - ⚠️ **`03` 無自動測試（DOM/kintone），上傳後要在 685 手動回歸一次**（下一關下拉的選、還原、預覽刷新）
+  - ⚠️ 上傳順序：`core/07` 必須在 `apps/role-definition/03` 與 `apps/form-route/01` 之前（core 一律先載，自動滿足）
+- [x] `apps/form-route/01-route-form.js` ✅ 2026-09-01
+  - 子表格每列：依段類型 **DOM 淡化**（`opacity`+`pointer-events`）不相關欄位——子表格內欄位
+    不能用 `setFieldShown`；段類型切換靠 radio 的 `change` DOM 事件（子表格內欄位的 kintone
+    change 事件官方未載明，不依賴）
+  - `指定角色` 格掛 `RolePicker`，隱藏原生 input，`onSelect` 寫回 `route_steps[i].role_id`
+    後 `kintone.app.record.set()`（會重繪）→ **MutationObserver** 統一重掛（列增刪、set 重繪一把抓）
+  - **不寫死子表格欄位 ID**：每列儲存格用 `control-<型別>-field-gaia` class 分類，兩個
+    single_check（段類型／簽核模式）再用 radio value 區分；欄位重建 ID 會變、此法不受影響
+  - submit 驗證 `validateRouteSteps`（純函式、13 項測試）：段類型↔欄位配對、「全員會簽」僅指定角色段、
+    指定角色須存在於啟用中角色、至少一列
+  - 載入時比對 `stop_at_title_level`／`skip_title_levels` 選項 vs 685 `title_level`（集合比，不看順序），
+    不一致跳一次 `showWarning`
+  - ⚠️ **DOM 部分無自動測試**，上傳 736 後手動驗：列增刪會重掛 picker、選角色寫得進 role_id、
+    切段類型會淡化對應欄位、submit 擋錯、職稱不同步會警告
+  - ⚠️ **同名角色限制**：picker 依 role_name 去重、寫第一筆 role_id；指定角色段目前解析成
+    **單一**簽核者。若某職能關要「同名多人全簽」需再擴充（引擎 fixed-role 段展開同名 role_id）——待 Jimmy 確認是否需要
+- [x] 測試：`route-engine`（20）+ `getRouteConfig`（9）+ `role-picker`（16）+ `route-form`（13）；合計 **149 項全過** ✅ 2026-09-01
+- [x] ~~驗證基石假設：proceed 寫 `current_approvers` + return event~~ **已否決** ✅ 2026-08-31
+  - Jimmy 實務回報「這樣直接寫入有時候會失敗」；查證確認是已知行為（執行者＝「指定欄位」時
+    用按鈕按下前的值解析）。**決策：執行者改用「更新執行者 API」（`PUT /k/v1/record/assignees`）**
+    為權威機制，proceed 欄位寫入降為 best-effort，`detail.show` 當安全網補正。
+    詳見 `docs/對話脈絡.md` §9.8、`docs/06` §5.3（已同步更新）
+- [ ] 驗證更新執行者 API：測試 App 上確認「狀態已設執行者時 `PUT /k/v1/record/assignees`
+      帶 revision 可成功換人、換完該人能執行動作」（比 proceed 改欄位穩，但仍要實測一次）← **需測試 App**
 
 #### ⬜ Phase C／D — 產生器與 adapter（第三輪）
 - [ ] `tools/10-status-generator.js` — 掛在路由表列表頁
@@ -261,8 +300,11 @@
 - [ ] `adapters/00-standard-adapter.js` — 一支掛所有申請 App
   - submit 需檢查 `chain.length > max_depth`（組織變動會讓鏈長超過已部署狀態數，單子會卡在最後一關）
   - submit 僅在「草稿」狀態重算鏈；proceed 需防 race（`current_step` 與動作關卡不一致即擋下）
+  - **執行者寫入**：proceed best-effort 寫 `current_approvers`；`detail.show` 當安全網——
+    狀態為簽核中(n) 但實際執行者 ≠ 子表格第 n 關 `expected_signers` → 即時解析 →
+    `PUT /k/v1/record/assignees`（帶 revision，衝突重試一次）+ 同步更新 `current_approvers`
 - [ ] 全新測試表單端到端：三種路由（純個人段／含職能段／**含跳關**）× 兩種鏈深度
-- [ ] 在途單改 685 的 `holder_user`，確認跑到該關拿到新的人（驗證即時解析）
+- [ ] 在途單改 685 的 `holder_user`，確認跑到該關拿到新的人（驗證即時解析 + 更新執行者 API 補正）
 - [ ] kintone 權限設定：記錄權限依狀態開放 + JS disabled（見 `docs/02` 權限節）
 
 ### ⬜ P9 — 大規模切換準備
@@ -325,3 +367,6 @@
 | v2 提案拍板 | 2026-07-11 | Jimmy 決策：照建議排程全數採納（06 於 P8 前、07 於試點後、子表格補 signing_mode） |
 | **P8 設計定案** | **2026-08-31** | docs/06 升版 1.1：員工鏈段補 `skip_title_levels`、廢除 repo spec 檔改由路由表驅動流程管理；確認全部關卡即時解析不做混合（理由見對話脈絡 §9.8） |
 | **P8 Phase A** | **2026-08-31** | 引擎前置修復 4 項（docs/05 #1#2#3#4）完成，91 項測試全過 |
+| **P8 Phase B a/b/c** | **2026-08-31** | ROUTE 欄位代碼、`getRouteConfig` 全量快取、`core/06-route-engine.js` `buildChainForForm`；`walkSegment`/`finalizeChain` 由 03 抽出共用；120 項測試全過。剩 d（表單 UI）卡 App 736 掛載 |
+| **P8 執行者機制定案** | **2026-08-31** | 基石假設否決：proceed 直寫欄位不穩（已知行為），執行者改用「更新執行者 API」`PUT /k/v1/record/assignees` 為權威 + `detail.show` 安全網；docs/06 升 1.2、docs/02 與對話脈絡 §9.8 同步 |
+| **P8 Phase B 收尾** | **2026-09-01** | App 736 建好＋schema 驗證、App ID 回填 736；`core/07-role-picker.js` 抽共用（方案 A）＋`03` 改用；`apps/form-route/01-route-form.js`（子表格逐列 DOM 淡化＋RolePicker＋`validateRouteSteps`）。149 項測試全過。剩：736／685 手動回歸、更新執行者 API 實測 |

@@ -20,6 +20,10 @@
  *   2026-08-31  Jimmy/Claude  P8 前置修復（docs/05 評估報告）：
  *                              #2 解析後有空簽核者的關卡即回 ok:false，不再放行
  *                              #3 assembleChainStep 帶入 signing_mode 快照
+ *   2026-08-31  Jimmy/Claude  P8 Phase B：沿鏈 + 循環偵測抽為 walkSegment（支援
+ *                              stop_at_title_level / skip_title_levels 與跨段共用 visited）；
+ *                              Phase 2+3 抽為 finalizeChain。兩者都給 core/06-route-engine.js
+ *                              複用，不重寫第二套（walkChainStructure 改為薄包裝，行為不變）
  */
 (() => {
   'use strict';
@@ -72,16 +76,19 @@
    * @param {Object} roleRecord
    * @param {string[]} holders - 已解析的簽核者 code 陣列
    * @param {number} stepNo
+   * @param {string|null} [signingModeOverride=null]
+   *   非 null 時覆蓋該關的 signing_mode 快照（P8 路由表 step_signing_mode 非「沿用角色表」時用）
    * @returns {Object}
    */
-  const assembleChainStep = (roleRecord, holders, stepNo) => ({
+  const assembleChainStep = (roleRecord, holders, stepNo, signingModeOverride = null) => ({
     [CF.STEP_NO]:          { value: stepNo },
     [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
     [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
     [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
     // 簽核模式快照：P8 流程管理逐關需要它決定行為（任一人簽 / 全員會簽）。
-    // 存快照而非跑到時再查角色表，省一次 API 且沒有時間差問題（docs/05 評估 #3）
-    [CF.SIGNING_MODE]:     { value: roleRecord[RF.SIGNING_MODE]?.value ?? SM.ANY },
+    // 存快照而非跑到時再查角色表，省一次 API 且沒有時間差問題（docs/05 評估 #3）。
+    // 路由表可在段層級覆寫（step_signing_mode），覆寫值優先於角色表設定。
+    [CF.SIGNING_MODE]:     { value: signingModeOverride ?? roleRecord[RF.SIGNING_MODE]?.value ?? SM.ANY },
     [CF.SIGNED_BY]:        { value: [] },
     [CF.SIGNED_AT]:        { value: '' },
   });
@@ -103,43 +110,128 @@
   };
 
   /**
-   * 走鏈結構（Phase 1）— 只讀快取、不解析 holder
+   * 沿 Linked List 走一個「段」（Phase 1）— 只讀快取、不解析 holder
    *
-   * @param {string} entryRoleId
-   * @returns {Promise<{ok: boolean, roleRecords: Object[], error: string|null}>}
+   * buildChain 的整鏈走訪與 P8 路由引擎的「員工鏈段」共用這一套沿鏈 + 循環偵測邏輯，
+   * 不重寫第二份。差別只在停止條件：
+   *   - buildChain：走到 is_chain_end 為止（stopAtTitleLevel = null）
+   *   - 員工鏈段：走到某個 title_level 為止（含該角色），中途可跳過指定職稱層級
+   *
+   * @param {Object} p
+   * @param {string} p.startRoleId             起始角色 ID
+   * @param {Set<string>} [p.visited]          已走訪角色 ID 集合；路由引擎跨段共用同一個 Set 以偵測跨段循環
+   * @param {string|null} [p.stopAtTitleLevel=null]
+   *   遇到 title_level 命中的角色即停（含該角色）；null＝走到 is_chain_end 為止
+   * @param {string[]} [p.skipTitleLevels=[]]
+   *   title_level 命中者照樣沿 next_role_id 往下走，只是不 push 進結果（跳關不是斷鏈，docs/06 §3.1）
+   * @param {number} [p.maxDepth=MAX_DEPTH]
+   * @returns {Promise<{
+   *   ok: boolean,
+   *   roleRecords: Object[],
+   *   error: string|null,
+   *   stoppedBy: 'chain_end'|'stop_title'|null,
+   *   nextRoleId: string|null   // 段結束後「下一關」role_id，供路由引擎串接後續員工鏈段
+   * }>}
    */
-  const walkChainStructure = async (entryRoleId) => {
+  const walkSegment = async ({
+    startRoleId,
+    visited = new Set(),
+    stopAtTitleLevel = null,
+    skipTitleLevels = [],
+    maxDepth = MAX_DEPTH,
+  }) => {
     const roleRecords = [];
-    const visited = new Set();
-    let currentRoleId = entryRoleId;
+    let currentRoleId = startRoleId;
 
-    for (let step = 1; step <= MAX_DEPTH; step++) {
+    for (let step = 1; step <= maxDepth; step++) {
       if (visited.has(currentRoleId)) {
-        return { ok: false, roleRecords, error: `偵測到循環：${currentRoleId} 重複出現` };
+        return { ok: false, roleRecords, error: `偵測到循環：${currentRoleId} 重複出現`, stoppedBy: null, nextRoleId: null };
       }
 
       const roleRecord = await getRole(currentRoleId);
       if (!roleRecord) {
-        return { ok: false, roleRecords, error: `角色 ${currentRoleId} 不存在或未啟用` };
+        return { ok: false, roleRecords, error: `角色 ${currentRoleId} 不存在或未啟用`, stoppedBy: null, nextRoleId: null };
       }
 
       visited.add(currentRoleId);
-      roleRecords.push(roleRecord);
+
+      const titleLevel = roleRecord[RF.TITLE_LEVEL]?.value || null;
+      const skipped = titleLevel !== null && skipTitleLevels.includes(titleLevel);
+      const hitStop = stopAtTitleLevel !== null && titleLevel === stopAtTitleLevel;
+
+      // 「主管送單不用簽自己」：段的第一關就命中截止職稱 → 個人段為空
+      // （docs/06 §4 兩個待決點採提案傾向）
+      const isFirstOfSegment = step === 1;
+      if (!skipped && !(hitStop && isFirstOfSegment)) {
+        roleRecords.push(roleRecord);
+      }
+
+      const nextRoleId = roleRecord[RF.NEXT_ROLE_ID].value || null;
+
+      if (hitStop) {
+        return { ok: true, roleRecords, error: null, stoppedBy: 'stop_title', nextRoleId };
+      }
 
       const isEnd = (roleRecord[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
-      if (isEnd) return { ok: true, roleRecords, error: null };
+      if (isEnd) {
+        if (stopAtTitleLevel !== null) {
+          return {
+            ok: false, roleRecords, stoppedBy: null, nextRoleId: null,
+            error: `員工鏈段設定矛盾：走到終點「${roleRecord[RF.ROLE_NAME].value}」仍未遇到職稱「${stopAtTitleLevel}」`,
+          };
+        }
+        return { ok: true, roleRecords, error: null, stoppedBy: 'chain_end', nextRoleId: null };
+      }
 
-      currentRoleId = roleRecord[RF.NEXT_ROLE_ID].value;
-      if (!currentRoleId) {
+      if (!nextRoleId) {
+        if (stopAtTitleLevel !== null) {
+          return {
+            ok: false, roleRecords, stoppedBy: null, nextRoleId: null,
+            error: `員工鏈段設定矛盾：角色「${roleRecord[RF.ROLE_NAME].value}」未設定下一關，仍未遇到職稱「${stopAtTitleLevel}」`,
+          };
+        }
         return {
-          ok: false,
-          roleRecords,
+          ok: false, roleRecords, stoppedBy: null, nextRoleId: null,
           error: `角色 ${roleRecord[RF.ROLE_ID].value} 未設定下一關且未標記終點`,
         };
       }
+
+      currentRoleId = nextRoleId;
     }
 
-    return { ok: false, roleRecords, error: `簽核鏈深度超過 ${MAX_DEPTH}，可能存在循環` };
+    return { ok: false, roleRecords, error: `簽核鏈深度超過 ${maxDepth}，可能存在循環`, stoppedBy: null, nextRoleId: null };
+  };
+
+  /**
+   * 走完整條鏈（Phase 1）— walkSegment 的薄包裝，行為與重構前完全一致
+   * @param {string} entryRoleId
+   * @returns {Promise<{ok: boolean, roleRecords: Object[], error: string|null}>}
+   */
+  const walkChainStructure = (entryRoleId) =>
+    walkSegment({ startRoleId: entryRoleId, visited: new Set() });
+
+  /**
+   * Phase 2 + 3：平行解析 holder → 擋空簽核者 → 組裝子表格
+   * buildChain 與 P8 buildChainForForm 共用同一套組裝邏輯。
+   *
+   * @param {Array<{role: Object, signingModeOverride: string|null}>} steps
+   * @returns {Promise<{ok: boolean, chain: Object[], error: string|null}>}
+   */
+  const finalizeChain = async (steps) => {
+    const roleRecords = steps.map((s) => s.role);
+
+    // Phase 2：平行解析所有 holder（N 次 API 同時發）
+    const holderLists = await Promise.all(roleRecords.map(resolveHolders));
+
+    // 空簽核者即擋下，不讓單子帶著死關卡送出（docs/05 評估 #2）
+    const emptyError = findEmptyHolderError(roleRecords, holderLists);
+    if (emptyError) return { ok: false, chain: [], error: emptyError };
+
+    // Phase 3：組裝（純 CPU，瞬間完成）
+    const chain = steps.map((s, idx) =>
+      assembleChainStep(s.role, holderLists[idx], idx + 1, s.signingModeOverride)
+    );
+    return { ok: true, chain, error: null };
   };
 
   // -------------------------------------------------------------------
@@ -183,21 +275,10 @@
         return { ok: false, chain: [], error: walked.error };
       }
 
-      // Phase 2：平行解析所有 holder（N 次 API 同時發）
-      const holderLists = await Promise.all(walked.roleRecords.map(resolveHolders));
-
-      // 空簽核者即擋下，不讓單子帶著死關卡送出
-      const emptyError = findEmptyHolderError(walked.roleRecords, holderLists);
-      if (emptyError) {
-        return { ok: false, chain: [], error: emptyError };
-      }
-
-      // Phase 3：組裝（純 CPU，瞬間完成）
-      const chain = walked.roleRecords.map((rec, idx) =>
-        assembleChainStep(rec, holderLists[idx], idx + 1)
+      // Phase 2 + 3：解析 holder → 擋空 → 組裝（整鏈不覆寫 signing_mode）
+      return finalizeChain(
+        walked.roleRecords.map((role) => ({ role, signingModeOverride: null }))
       );
-
-      return { ok: true, chain, error: null };
 
     } catch (err) {
       return { ok: false, chain: [], error: err.message ?? String(err) };
@@ -313,5 +394,9 @@
     validateChain,
     simulateChain,
     reverseQuery,
+    // P8 路由引擎（core/06-route-engine.js）複用的共用零件——沿鏈走訪與子表格組裝
+    // 只維護這一份，不重寫第二套
+    walkSegment,
+    finalizeChain,
   });
 })();
