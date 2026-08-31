@@ -11,6 +11,9 @@
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-08-27  Jimmy/Claude  role_id 補零由 3 碼改為 4 碼（與規格書及 tools/04・05・06 一致，
+ *                             這是 ROLE_599／ROLE_0598 混用的來源）；取最大號改為全量掃描，
+ *                             不再依賴會被字串排序誤導的 order by role_id desc
  */
 (() => {
   'use strict';
@@ -24,34 +27,50 @@
   };
 
   /**
-   * 取得目前最大 role_id 序號
-   * 查詢所有 role_id，擷取數字部分取最大值
+   * 取得目前最大 role_id 序號（全量掃描，取數字部分的最大值）
+   *
+   * ⚠️ 不可用 `order by role_id desc limit 500` 取第一筆：
+   *    role_id 是文字欄位，kintone 依字串排序。位數一旦混用，
+   *    字串序的 "ROLE_599" 會排在 "ROLE_0598" 前面，超過一頁時
+   *    真正的最大號可能被切在 500 筆之外 → 產生重複代碼。
+   *
    * @returns {Promise<number>}
    */
   const getMaxSequence = async () => {
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
-      app: APP_ID.ROLE_DEFINITION,
-      fields: [F.ROLE_ID],
-      query: `order by ${F.ROLE_ID} desc limit 500`,
-    });
-
+    const LIMIT = 500;
+    let offset = 0;
     let max = 0;
-    for (const rec of resp.records) {
-      const val = rec[F.ROLE_ID].value || '';
-      const num = parseInt(val.replace(ROLE_ID_PREFIX, ''), 10);
-      if (num > max) max = num;
+
+    for (;;) {
+      const resp = await kintoneApi('/k/v1/records', 'GET', {
+        app: APP_ID.ROLE_DEFINITION,
+        fields: [F.ROLE_ID],
+        query: `order by $id asc limit ${LIMIT} offset ${offset}`,
+      });
+
+      for (const rec of resp.records) {
+        const val = rec[F.ROLE_ID].value || '';
+        if (!val.startsWith(ROLE_ID_PREFIX)) continue;
+        // 位數不論 3 碼或 4 碼，parseInt 後都是同一條號碼線
+        const num = parseInt(val.slice(ROLE_ID_PREFIX.length), 10);
+        if (Number.isInteger(num) && num > max) max = num;
+      }
+
+      if (resp.records.length < LIMIT) break;
+      offset += LIMIT;
     }
     return max;
   };
 
   /**
    * 產生下一個 role_id
-   * 格式：ROLE_001, ROLE_002, ...
+   * 格式：ROLE_0001, ROLE_0002, …（4 碼，與 docs/02-欄位代碼對照表.md
+   * 及 tools/04・05・06 一致；原本這裡是 3 碼，才會出現 ROLE_599／ROLE_0598 混用）
    * @param {number} seq
    * @returns {string}
    */
   const generateRoleId = (seq) =>
-    ROLE_ID_PREFIX + String(seq).padStart(3, '0');
+    ROLE_ID_PREFIX + String(seq).padStart(4, '0');
 
   // --- 事件綁定 ---
 
