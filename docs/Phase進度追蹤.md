@@ -6,15 +6,15 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P2** — P1 已於 2026-07-12 正式驗收簽收（清單見 `docs/P1驗收清單.md`），下一棒是起點表
-- **下一步動作**:上傳 `apps/employee-entry/` 2 支 + core 至 App 686 測試；同步產出 HR 手冊快速上手版（docs/05 #11）
-- **最後更新**:2026-08-20（tools/05 起點與下一關改為同步設定、新增 G 區、修正 A 區漏人；P1 已於 2026-07-12 簽收，v2 提案已於 2026-07-11 拍板照建議排程採納）
+- **當前 Phase**:**P8 起步** — Phase A（引擎前置修復 4 項）已完成；P2 的上傳測試仍待辦，兩者不互相阻塞
+- **下一步動作**:Jimmy 依 `docs/02` App 3 規格手動建立 `form_route_config` App → 回填 App ID 至 `core/01-config.js` → 進 Phase B（路由引擎 + 設定表 UI）
+- **最後更新**:2026-08-31（P8 設計定案並升版 docs/06 至 1.1；Phase A 四項修復完成、91 項測試全過）
 
 ---
 
 ## Phase 清單
 
-### ✅ P0 — 兩表建立 + 環境確認 (完成)
+### ✅ P0 — 兩表建立 + 環境確認 (完成) 
 - [x] IT 確認 kintone 群組功能啟用
 - [x] IT 確認 `kintone.getMembersByGroupCode()` 可用 ✅ 2026-04-14
 - [x] 確認 kintone 環境：**雲端版** ✅ 2026-04-14
@@ -225,10 +225,45 @@
 - [x] `tools/03-reverse-query.js` — 展開群組 + 找申請人 ✅ 2026-04-14
 - [ ] 上傳並測試
 
-### ⬜ P8 — 第一個試點 App 接入 (2 次會話)
-- [ ] 選定試點 App
-- [ ] 接入並試跑 2 週
-- [ ] 整合 process.proceed 事件
+### 🔄 P8 — 表單路由 + 流程管理標準化 + 試點接入（進行中）
+
+> 設計定案見 `docs/06`（v1.1）與 `docs/對話脈絡.md` §9.8。
+> 核心決策：**`form_route_config` 是唯一設定源**，同時驅動執行期建鏈與部署期產生 status.json。
+> 全部關卡一律即時解析，不做混合方案。
+
+#### ✅ Phase A — 引擎前置修復（2026-08-31 完成，91 項測試全過）
+- [x] **#1** `core/02-api-client.js` — `entryCache` 補 TTL（60 秒）+ 新增 `ensureFresh()` 一次清兩個快取
+  - `buildChain` 的 `forceFresh` 同步改呼叫 `ensureFresh()`——**只改 api-client 不改呼叫端，這個修復等於白做**
+- [x] **#2** `core/03-chain-builder.js` — 抽出 `findEmptyHolderError()`，解析後有空簽核者的關卡即回 `ok:false`
+  - 錯誤訊息指出第幾關與角色名；Phase B 的 `buildChainForForm` 可直接複用同一支函式
+- [x] **#3** `assembleChainStep` 帶入 `signing_mode` 快照 + `CHAIN_FIELDS` / `docs/02` 同步
+  - 趁子表格尚未嵌入任何申請 App 才是零成本，上線後再改是遷移工程
+- [x] **#4** `tools/01-health-check.js` — 新增第 6 條規則「同名角色設定一致性」
+  - 同名＝同一關，`next_role_id`／`is_chain_end`／`signing_mode` 三者不一致列 🔴，可用 tools/07 統一
+- [x] 測試補回歸案例：空簽核者（個人／群組兩種）、`signing_mode` 逐關快照
+
+#### ⬜ Phase B — 路由設定層（下一輪）
+- [ ] **Jimmy 手動建立 `form_route_config` App**（規格見 `docs/02` App 3）→ 回填 App ID
+- [ ] `core/01-config.js` — 新增 `APP_ID.FORM_ROUTE_CONFIG`、`ROUTE_FIELDS`、`ROUTE_STEP_FIELDS`、`ADAPTER_FIELDS`
+- [ ] `core/02-api-client.js` — `getRouteConfig()`，比照 `loadAllRoles()` 的三道防線（TTL + Promise singleton）
+- [ ] `core/06-route-engine.js` — `walkSegment()` + `buildChainForForm()`
+  - `walkSegment` 由 `walkChainStructure()` 重構抽出，沿鏈與循環偵測不重寫一套
+  - `skip_title_levels` 命中者**照走 next_role_id，只是不 push**——跳關不是斷鏈
+  - `visited` Set 跨段共用；查無路由 → fallback 走 `buildChain()`，向下相容
+- [ ] `apps/form-route/01-route-form.js` — 段類型條件顯示 + 角色下拉（從 03-next-role-dropdown 抽共用）
+- [ ] ⚠️ **驗證基石假設**：proceed 裡寫 `current_approvers` 並 return event，狀態轉移後 assignee 是否用新值
+  - 用十行 JS 在測試 App 實測。**不成立的話 Phase D 的 proceed 要整個重寫**
+
+#### ⬜ Phase C／D — 產生器與 adapter（第三輪）
+- [ ] `tools/10-status-generator.js` — 掛在路由表列表頁
+  - K 值算法：取 686 的 distinct `entry_role_id`（~80 個）各展開一次取 max，**不要掃 500 名員工**
+  - 管線：GET 備份 → generate → validate → PUT preview → 人工確認 → deploy → 回寫 `max_depth`/`deployed_at`/`deployed_hash`
+- [ ] `adapters/00-standard-adapter.js` — 一支掛所有申請 App
+  - submit 需檢查 `chain.length > max_depth`（組織變動會讓鏈長超過已部署狀態數，單子會卡在最後一關）
+  - submit 僅在「草稿」狀態重算鏈；proceed 需防 race（`current_step` 與動作關卡不一致即擋下）
+- [ ] 全新測試表單端到端：三種路由（純個人段／含職能段／**含跳關**）× 兩種鏈深度
+- [ ] 在途單改 685 的 `holder_user`，確認跑到該關拿到新的人（驗證即時解析）
+- [ ] kintone 權限設定：記錄權限依狀態開放 + JS disabled（見 `docs/02` 權限節）
 
 ### ⬜ P9 — 大規模切換準備
 - [ ] `scripts/migration/` — 舊資料轉換
@@ -288,3 +323,5 @@
 | P7（程式碼） | 2026-04-14 | 待上傳 kintone 測試 |
 | 架構評估 + v2 提案 | 2026-07-06 | 交付 docs/05、06、07 三份文件（純文件，未動程式碼） |
 | v2 提案拍板 | 2026-07-11 | Jimmy 決策：照建議排程全數採納（06 於 P8 前、07 於試點後、子表格補 signing_mode） |
+| **P8 設計定案** | **2026-08-31** | docs/06 升版 1.1：員工鏈段補 `skip_title_levels`、廢除 repo spec 檔改由路由表驅動流程管理；確認全部關卡即時解析不做混合（理由見對話脈絡 §9.8） |
+| **P8 Phase A** | **2026-08-31** | 引擎前置修復 4 項（docs/05 #1#2#3#4）完成，91 項測試全過 |
