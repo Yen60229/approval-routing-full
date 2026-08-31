@@ -16,7 +16,8 @@
  *        並提供「保留第一筆」快捷。
  *
  *   ③ 一人身兼多個角色 — 同一個人出現在多筆「role_name 不同」的記錄
- *        兼任多關通常是正常的，列出來僅供確認沒有誤設（純檢視）
+ *        兼任多關通常是正常的，列出來供確認沒有誤設。逐筆列出實際記錄
+ *        （role_id 連結 + 記錄編號 + 被指向數），誤設的可直接勾選刪除或停用。
  *
  * 【刪除前的安全檢查】
  *   同名角色的每一筆各有自己的 role_id，可能正被別處指向，刪掉就會斷鏈：
@@ -27,9 +28,9 @@
  *
  * 【影響的欄位】
  *   - 685 holder_user：僅 ①「拆分」寫入，原記錄縮成第一人，其餘人移到新記錄
- *   - 685 is_active  ：② 的「停用勾選記錄」取消勾選
+ *   - 685 is_active  ：②③ 的「停用勾選記錄」取消勾選
  *   - 685 記錄本身   ：① 的「拆分」會新增記錄；
- *                      ② 的「刪除勾選記錄」為永久刪除（kintone 無還原桶）
+ *                      ②③ 的「刪除勾選記錄」為永久刪除（kintone 無還原桶）
  *
  * 【依賴】
  *   - core/01-config.js（Config）
@@ -45,6 +46,8 @@
  *                             ② 措辭更正（同名多筆是正常的，違規的是同一人佔多筆）
  *                             修正同一筆記錄在多個人的區塊各有一個 checkbox 時，
  *                             勾選狀態不同步、導致刪錯筆的問題
+ *   2026-08-27  Jimmy/Claude  ③ 區由純檢視改為逐筆對應到實際記錄並可勾選刪除／停用，
+ *                             沿用②的被指向鎖定；動作列移到面板底部，②③ 共用勾選集合
  */
 (() => {
   'use strict';
@@ -242,6 +245,9 @@
           code: u.code,
           name: u.name,
           roleNames: [...byRoleName.keys()].sort((a, b) => a.localeCompare(b, 'zh-Hant')),
+          // 逐筆列出實際記錄，才能直接對應到 685 的哪一筆並勾選處理
+          records: [...u.records].sort((a, b) =>
+            a.roleName.localeCompare(b.roleName, 'zh-Hant') || Number(a.recordId) - Number(b.recordId)),
         });
       }
     }
@@ -250,7 +256,7 @@
     sameName.sort(byName);
     crossRole.sort((a, b) => b.roleNames.length - a.roleNames.length || byName(a, b));
 
-    return { multiHolder, sameName, crossRole, totalRoles: roles.length };
+    return { multiHolder, sameName, crossRole, totalRoles: roles.length, roles };
   };
 
   // ═══════════════════════════════════════════════════════════════════
@@ -342,6 +348,16 @@
   const TD_CSS = 'padding:8px 10px; border-bottom:1px solid #f0f0f0; vertical-align:top;';
   const LINK_CSS = 'color:#2980b9; text-decoration:none;';
 
+  /** 「被指向」欄：鏈上游與員工起點各有幾筆指著它（有數字就不能直接刪） */
+  const refCellHtml = (r) => {
+    const refs = [];
+    if (r.inboundChain) refs.push(`鏈上游 ${r.inboundChain}`);
+    if (r.inboundEntry) refs.push(`起點 ${r.inboundEntry}`);
+    return refs.length
+      ? `<span style="color:#c0392b; font-weight:700;">${esc(refs.join('／'))}</span>`
+      : '<span style="color:#999;">無</span>';
+  };
+
   const emptyRow = (colspan, text) =>
     `<tr><td colspan="${colspan}" style="padding:16px; text-align:center; color:#999;">${esc(text)}</td></tr>`;
 
@@ -359,12 +375,11 @@
       'background:#fff; border-radius:10px; width:min(1040px, 95vw); height:min(740px, 92vh); ' +
       'display:flex; flex-direction:column; padding:20px 24px; box-shadow:0 8px 40px rgba(0,0,0,.25);';
 
-    const { multiHolder, sameName, crossRole, totalRoles } = model;
+    const { multiHolder, sameName, crossRole, totalRoles, roles } = model;
 
-    // 勾選的記錄（跨群組共用一個集合）；locked 的記錄不允許進來
+    // 勾選的記錄（②③ 共用一個集合，同一筆在兩區各有 checkbox 也只算一次）
     const picked = new Set();
-    const recordById = new Map();
-    sameName.forEach((u) => u.groups.forEach((g) => g.records.forEach((r) => recordById.set(r.recordId, r))));
+    const recordById = new Map(roles.map((r) => [r.recordId, r]));
 
     // ── ① ──
     const sec1Rows = multiHolder.length
@@ -382,15 +397,7 @@
       : emptyRow(3, '沒有這類問題');
 
     /** ② 單筆記錄一列：勾選框 + 判斷要不要留所需的資訊 */
-    const dupRecordRow = (r) => {
-      const refs = [];
-      if (r.inboundChain) refs.push(`鏈上游 ${r.inboundChain}`);
-      if (r.inboundEntry) refs.push(`起點 ${r.inboundEntry}`);
-      const refText = refs.length
-        ? `<span style="color:#c0392b; font-weight:700;">${esc(refs.join('／'))}</span>`
-        : '<span style="color:#999;">無</span>';
-
-      return `
+    const dupRecordRow = (r) => `
         <tr style="border-top:1px solid #f0f0f0;">
           <td style="padding:6px 8px; text-align:center; width:36px;">
             <input type="checkbox" data-record="${esc(r.recordId)}" ${r.locked ? 'disabled title="仍被指向，請先改指向再處理"' : ''}>
@@ -402,9 +409,8 @@
           <td style="padding:6px 8px; color:#555;">${esc(r.nextName)}</td>
           <td style="padding:6px 8px; color:#555;">${esc(r.signingMode || '—')}</td>
           <td style="padding:6px 8px;">${r.holders.length} 人</td>
-          <td style="padding:6px 8px;">${refText}</td>
+          <td style="padding:6px 8px;">${refCellHtml(r)}</td>
         </tr>`;
-    };
 
     const sec2Html = sameName.length
       ? sameName.map((u) => `
@@ -441,14 +447,41 @@
       : '<div style="padding:16px; text-align:center; color:#999;">沒有這類問題</div>';
 
     // ── ③ ──
-    const sec3Rows = crossRole.length
+    // 逐筆列出實際記錄（含 role_id 連結與被指向數），才能直接勾選刪除／停用
+    const crossRecordRow = (r) => `
+      <tr style="border-top:1px solid #f0f0f0;">
+        <td style="padding:6px 8px; text-align:center; width:36px;">
+          <input type="checkbox" data-record="${esc(r.recordId)}" ${r.locked ? 'disabled title="仍被指向，請先改指向再處理"' : ''}>
+        </td>
+        <td style="padding:6px 8px;">${esc(r.roleName)}</td>
+        <td style="padding:6px 8px;">
+          <a href="${recordUrl(r.recordId)}" target="_blank" style="${LINK_CSS}">${esc(r.roleId)}</a>
+          <span style="color:#999; font-size:12px;">（記錄 ${esc(r.recordId)}）</span>
+        </td>
+        <td style="padding:6px 8px; color:#555;">${esc(r.nextName)}</td>
+        <td style="padding:6px 8px;">${refCellHtml(r)}</td>
+      </tr>`;
+
+    const sec3Html = crossRole.length
       ? crossRole.map((u) => `
-          <tr>
-            <td style="${TD_CSS}"><strong>${esc(u.name)}</strong><br><span style="color:#888; font-size:12px;">${esc(u.code)}</span></td>
-            <td style="${TD_CSS} text-align:center;">${u.roleNames.length}</td>
-            <td style="${TD_CSS}">${esc(u.roleNames.join('、'))}</td>
-          </tr>`).join('')
-      : emptyRow(3, '沒有人身兼多個角色');
+          <div style="padding:12px 14px; border-bottom:1px solid #eee;">
+            <div style="font-size:14px; margin-bottom:8px;">
+              <strong>${esc(u.name)}</strong>
+              <span style="color:#888; font-size:12px;">（${esc(u.code)}）</span>
+              <span style="color:#666; font-size:13px;">　擔任 ${u.roleNames.length} 個關卡</span>
+            </div>
+            <table style="${TABLE_CSS} border:1px solid #eee; border-radius:4px;">
+              <thead><tr>
+                <th style="${TH_CSS} width:36px;"></th>
+                <th style="${TH_CSS}">角色</th>
+                <th style="${TH_CSS}">role_id</th>
+                <th style="${TH_CSS}">下一關</th>
+                <th style="${TH_CSS}">被指向</th>
+              </tr></thead>
+              <tbody>${u.records.map(crossRecordRow).join('')}</tbody>
+            </table>
+          </div>`).join('')
+      : '<div style="padding:16px; text-align:center; color:#999;">沒有人身兼多個角色</div>';
 
     panel.innerHTML = `
       <div style="display:flex; align-items:center; margin-bottom:6px;">
@@ -496,37 +529,38 @@
               請先用「批次設定下一關」改指向，或到 686 改起點角色，再回來重掃。
             </div>` : ''}
           ${sec2Html}
-          ${sameName.length ? `
-            <div style="padding:12px 14px; border-top:1px solid #eee; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-              <span data-role="picked-count" style="font-size:13px; color:#666;">已勾選 0 筆</span>
-              <span style="flex:1;"></span>
-              <button data-role="deactivate"
-                style="font-size:14px; padding:9px 20px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer;">
-                停用勾選的記錄
-              </button>
-              <button data-role="delete"
-                style="font-size:14px; padding:9px 20px; background:#e74c3c; color:#fff; border:none; border-radius:6px; cursor:pointer;">
-                刪除勾選的記錄
-              </button>
-            </div>` : ''}
         </div>
 
         <div style="${SECTION_CSS}">
           <div style="${SECTION_HEAD_CSS}">
             ③ 一人身兼多個角色（${crossRole.length} 人）
-            <span style="font-weight:400; font-size:13px;">— 兼任多關通常正常，僅供確認沒有誤設</span>
+            <span style="font-weight:400; font-size:13px;">— 兼任多關通常正常；確認有誤設的話可直接勾選處理</span>
           </div>
-          <table style="${TABLE_CSS}">
-            <thead><tr>
-              <th style="${TH_CSS} width:180px;">簽核者</th>
-              <th style="${TH_CSS} width:70px;">關卡數</th>
-              <th style="${TH_CSS}">擔任的角色</th>
-            </tr></thead>
-            <tbody>${sec3Rows}</tbody>
-          </table>
+          ${crossRole.length ? `
+            <div style="padding:10px 14px; background:#fafafa; border-bottom:1px solid #eee; font-size:13px; color:#555;">
+              這裡列的是<strong>實際的角色記錄</strong>，點 role_id 可開啟該筆。
+              要移除誤設的兼任，勾選後用下方的動作；<strong>「被指向」有數字的一樣鎖住</strong>，
+              請先改指向再處理。
+            </div>` : ''}
+          ${sec3Html}
         </div>
 
       </div>
+
+      ${(sameName.length || crossRole.length) ? `
+        <div style="border-top:1px solid #e5e7eb; padding:12px 0 0; margin-top:8px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+          <span data-role="picked-count" style="font-size:13px; color:#666;">已勾選 0 筆</span>
+          <span style="font-size:12px; color:#999;">（②③ 區共用）</span>
+          <span style="flex:1;"></span>
+          <button data-role="deactivate"
+            style="font-size:14px; padding:9px 20px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer;">
+            停用勾選的記錄
+          </button>
+          <button data-role="delete"
+            style="font-size:14px; padding:9px 20px; background:#e74c3c; color:#fff; border:none; border-radius:6px; cursor:pointer;">
+            刪除勾選的記錄
+          </button>
+        </div>` : ''}
     `;
 
     const body = panel.querySelector('[data-role="body"]');
