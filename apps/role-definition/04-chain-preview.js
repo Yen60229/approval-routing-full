@@ -22,6 +22,21 @@
  * 2026-08-26  Jimmy/Claude  共同段落改直式時間軸（圓點 + 關卡標示），解決橫向換行被切成多段的問題
  * 2026-08-26  Jimmy/Claude  高層角色上游可達上百條：改為左右版面（上游區塊／共同段落），
  *                           上游各關靠左不留空欄、超過門檻預設收合成摘要並提供搜尋過濾
+ * 2026-08-27  Jimmy/Claude  排版修正：一關掛很多人時標籤在格內換行、上游區塊寬度上限 660px
+ *                           自行橫捲（共同段落不再被推出畫面），箭頭與節點包成 flex 不再被換行
+ * 2026-08-27  Jimmy/Claude  新增對外介面 ChainPreview.loadRoles / renderInto，供列表頁工具
+ *                           tools/08-role-chain-search.js 把鏈畫進任意容器
+ * 2026-08-27  Jimmy/Claude  一列橫跨多個單位時原本整列放棄收合、每個標籤都印全名：
+ *                           改為格子內依單位分區塊、單位名各寫一次；並修正標籤內的角色名被折成多行
+ * 2026-08-27  Jimmy/Claude  混合單位的列改成兩段式下鑽：左欄「多單位（N）」點開列出單位，
+ *                           選定單位後該列只顯示該單位的角色與鏈（直屬上一關為錨點不受篩選）；
+ *                           選定後格子裡只留職稱，單位名不再重複出現
+ * 2026-08-27  Jimmy/Claude  格子樣式統一：一格只有一個角色就畫圓點節點（與直屬上一關同樣式），
+ *                           兩個以上才用標籤；所有格子改用同一種「箭頭 + 內容」包法
+ * 2026-08-27  Jimmy/Claude  上游改回右對齊：空白欄補在左邊，同一欄＝離本關同樣距離，
+ *                           表頭改為「上一關／上2關…」與右側的「本關／下N關」同一套說法
+ *                           （原本靠左會讓同一欄一列是課長、一列是課員；當初靠左是為了避免
+ *                            內容被推出畫面，該問題已由標籤換行與 660px 上限解決）
  */
 (() => {
   'use strict';
@@ -35,6 +50,9 @@
   // 上游分支超過此數量 → 預設收合成摘要，並提供搜尋框
   // （高層角色如總經理，上游可能上百條，全部攤開會蓋掉真正要看的下游）
   const UPSTREAM_FOLD_THRESHOLD = 8;
+
+  // 單位選擇器裡「全部顯示」用的哨兵值（不能用空字串，那是「未標單位」的真值）
+  const ALL_UNITS = '__all__';
 
   /**
    * 取得所有啟用角色，建成雙向綁定的 Map (roleId → record)
@@ -163,14 +181,19 @@
       }
       .ar-pulse { animation: ar-pulse-anim 2s infinite; }
 
+      /* class 的 display 會蓋掉 [hidden] 的預設值，這裡統一補回來 */
+      #ar-chain-preview-content [hidden], .ar-layout [hidden] { display: none !important; }
+
       /* 版面：左＝上游區塊（可收合），右＝共同段落 */
       .ar-layout { display: flex; align-items: flex-start; gap: 18px; }
+      /* 上游太寬時在自己這一塊裡橫捲，不把右邊的共同段落推出畫面外 */
+      .ar-up { min-width: 0; max-width: 660px; overflow-x: auto; }
       .ar-common {
         background: #f8fafc; border-left: 2px solid #cbd5e1;
         border-radius: 0 8px 8px 0; padding: 8px 16px; flex-shrink: 0;
       }
 
-      /* 階層對齊表：一列 = 一條上游分支，一欄 = 一關（靠左排，不留空欄） */
+      /* 階層對齊表：一列 = 一條上游分支，一欄 = 離本關同樣距離的一關（右對齊） */
       .ar-grid { border-collapse: separate; border-spacing: 0; }
       .ar-grid th {
         font-size: 11px; color: #94a3b8; font-weight: 700; text-align: left;
@@ -182,9 +205,15 @@
       /* 左欄的單位名（同一列共用時只寫一次） */
       .ar-unit { font-size: 13px; color: #64748b; }
 
+      /* 一關有很多人時，標籤在格子內換行（不換行會把整張表撐到要拖畫面才看得完） */
+      /* 選擇器要比 .ar-grid td 更明確，否則被上面的 nowrap 蓋掉 */
+      .ar-grid td.ar-chips { white-space: normal; max-width: 420px; }
+
       /* 關與關之間的方向指示 */
-      .ar-arrow { color: #cbd5e1; margin-right: 6px; }
+      .ar-arrow { color: #cbd5e1; margin-right: 6px; flex-shrink: 0; }
       .ar-to    { color: #cbd5e1; padding-left: 0; padding-right: 0; }
+      /* 箭頭是 inline、節點是 block，不包成 flex 會被擠到下一行 */
+      .ar-cell-row { display: flex; align-items: center; }
 
       /* 上游收合按鈕與搜尋框 */
       .ar-fold-btn {
@@ -212,6 +241,31 @@
         background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px;
         padding: 2px 8px; font-size: 13px; color: #475569;
         margin: 2px 5px 2px 0; cursor: help;
+        white-space: nowrap;   /* 折行只發生在標籤之間，不把角色名折斷 */
+      }
+
+      /* 混合單位的列：左欄的單位選擇器（點開 → 選單位 → 才顯示該單位的人） */
+      .ar-unit-pick {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: none; border: none; font-family: inherit; font-size: 13px;
+        color: #475569; cursor: pointer; padding: 2px 4px; border-radius: 4px;
+      }
+      .ar-unit-pick:hover { background: #f1f5f9; }
+      .ar-unit-list { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; margin-top: 4px; }
+      .ar-unit-opt {
+        background: none; border: none; font-family: inherit; font-size: 12px;
+        color: #2563eb; cursor: pointer; padding: 2px 6px; border-radius: 4px;
+        text-align: left; white-space: nowrap;
+      }
+      .ar-unit-opt:hover { background: #eff6ff; }
+      .ar-unit-opt.is-active { background: #dbeafe; font-weight: 700; }
+      .ar-unit-hint { font-size: 12px; color: #cbd5e1; white-space: nowrap; }
+
+      /* 一格內橫跨多個單位時：單位名自成一行寫一次，底下才是該單位的職稱 */
+      .ar-unit-block + .ar-unit-block { margin-top: 8px; }
+      .ar-unit-tag {
+        display: block; font-size: 11px; color: #94a3b8;
+        white-space: nowrap; margin-bottom: 1px;
       }
 
       /* 共同段落：直式時間軸（不論幾關都是一條連續的線，不換行也不橫捲） */
@@ -315,6 +369,41 @@
    */
   const bindUpstreamEvents = (containerEl) => {
     containerEl.addEventListener('click', (e) => {
+      // ① 多單位：點開／收起單位清單
+      const picker = e.target.closest('[data-ar-units]');
+      if (picker) {
+        const list = picker.parentElement.querySelector('[data-ar-unit-list]');
+        if (!list) return;
+        list.hidden = !list.hidden;
+        picker.querySelector('.ar-caret').textContent = list.hidden ? '▸' : '▾';
+        return;
+      }
+
+      // ② 選定單位：該列只顯示這個單位的角色（直屬上一關是錨點，不受影響）
+      const opt = e.target.closest('[data-ar-unit]');
+      if (opt) {
+        const tr = opt.closest('tr');
+        const unit = opt.dataset.arUnit;
+        const isAll = unit === ALL_UNITS;
+
+        tr.querySelectorAll('.ar-unit-block[data-unit]').forEach((block) => {
+          block.hidden = !isAll && block.dataset.unit !== unit;
+        });
+        // 選定單一單位後，單位名已寫在左欄，格子裡只留職稱；
+        // 「全部顯示」時各區塊混在一起，才需要把單位名標回去
+        tr.querySelectorAll('.ar-unit-block[data-unit] .ar-unit-tag').forEach((tag) => {
+          tag.hidden = !isAll;
+        });
+        tr.querySelectorAll('[data-ar-unit-hint]').forEach((hint) => { hint.hidden = true; });
+        tr.querySelectorAll('.ar-arrow').forEach((arrow) => { arrow.hidden = false; });
+        tr.querySelectorAll('[data-ar-unit]').forEach((b) => b.classList.toggle('is-active', b === opt));
+
+        const label = tr.querySelector('[data-ar-unit-label]');
+        if (label) label.textContent = isAll ? opt.dataset.arAllLabel : (unit || '（未標單位）');
+        return;
+      }
+
+      // ③ 上游收合
       const btn = e.target.closest('[data-ar-fold]');
       if (!btn) return;
       const body = containerEl.querySelector('[data-ar-fold-body]');
@@ -478,26 +567,74 @@
   const tipAttr = (group) =>
     JSON.stringify({ names: group.names, roleId: group.representative.roleId }).replace(/"/g, '&quot;');
 
-  /** 一般欄位：以標籤（chip）呈現同一關的多個角色 */
-  const renderChipsCell = (groups, rowUnit) =>
-    groups
-      .map((g) => {
-        const { unit, title } = splitRoleName(g.representative.roleName);
-        const label = rowUnit && unit === rowUnit ? title : g.representative.roleName;
-        const count = g.names.length > 1 ? `<span class="ar-count-badge">${g.names.length}</span>` : '';
-        return `<span class="ar-chip" data-ar-tip="${tipAttr(g)}">${label}${count}</span>`;
-      })
+  /**
+   * 把同一格的群組依單位分組（保持原順序），讓混合單位的格子也能只寫一次單位名。
+   * @returns {Array<{unit: string, groups: Array}>}
+   */
+  const groupByUnit = (groups) => {
+    const byUnit = new Map();
+    for (const g of groups) {
+      const { unit } = splitRoleName(g.representative.roleName);
+      if (!byUnit.has(unit)) byUnit.set(unit, []);
+      byUnit.get(unit).push(g);
+    }
+    return [...byUnit.entries()].map(([unit, gs]) => ({ unit, groups: gs }));
+  };
+
+  /** 依「這一格採用的單位名」決定標籤上要不要拿掉單位前綴 */
+  const labelOf = (group, cellUnit) => {
+    const { unit, title } = splitRoleName(group.representative.roleName);
+    return cellUnit && unit === cellUnit ? title : group.representative.roleName;
+  };
+
+  const chipHtml = (g, cellUnit) => {
+    const count = g.names.length > 1 ? `<span class="ar-count-badge">${g.names.length}</span>` : '';
+    return `<span class="ar-chip" data-ar-tip="${tipAttr(g)}">${labelOf(g, cellUnit)}${count}</span>`;
+  };
+
+  const nodeOf = (g, cellUnit) =>
+    renderNodeHtml({ ...g.representative, roleName: labelOf(g, cellUnit) }, 'normal', g.names);
+
+  /**
+   * 一格內的角色：只有一個就畫成圓點節點（與直屬上一關同樣式，鏈的圓點才連得起來），
+   * 兩個以上才用標籤並排（不然一整排圓點又高又長）。
+   */
+  const cellItemsHtml = (gs, cellUnit) =>
+    (gs.length === 1 ? nodeOf(gs[0], cellUnit) : gs.map((g) => chipHtml(g, cellUnit)).join(''));
+
+  /**
+   * 一般欄位：以標籤（chip）呈現同一關的多個角色。
+   *
+   * 整列共用同一個單位時，單位名已寫在左欄，這裡只留職稱；
+   * 一列橫跨多個單位時（例如某課長同時收營業 Team 與 CS Team），
+   * 改成格子內依單位分行，單位名各寫一次——否則每個標籤都要印全名。
+   */
+  const renderChipsCell = (groups, rowUnit, drillDown = false) => {
+    if (rowUnit) return cellItemsHtml(groups, rowUnit);
+
+    return groupByUnit(groups)
+      .map(({ unit, groups: gs }) => `
+        <div class="ar-unit-block" data-unit="${unit}"${drillDown ? ' hidden' : ''}>
+          ${unit ? `<span class="ar-unit-tag">${unit}</span>` : ''}
+          <div>${cellItemsHtml(gs, unit)}</div>
+        </div>`)
       .join('');
+  };
 
   /** 最靠近目前節點的那一關：沿用圓點節點樣式，維持流程線的視覺連續性 */
-  const renderNodesCell = (groups, rowUnit) =>
-    groups
-      .map((g) => {
-        const { unit, title } = splitRoleName(g.representative.roleName);
-        const label = rowUnit && unit === rowUnit ? title : g.representative.roleName;
-        return renderNodeHtml({ ...g.representative, roleName: label }, 'normal', g.names);
-      })
+  const renderNodesCell = (groups, rowUnit) => {
+    const nodes = (gs, cellUnit) => gs.map((g) => nodeOf(g, cellUnit)).join('');
+
+    if (rowUnit) return nodes(groups, rowUnit);
+
+    return groupByUnit(groups)
+      .map(({ unit, groups: gs }) => `
+        <div class="ar-unit-block">
+          ${unit ? `<span class="ar-unit-tag">${unit}</span>` : ''}
+          ${nodes(gs, unit)}
+        </div>`)
       .join('');
+  };
 
   /** 上游總覽數字（收合時的摘要用） */
   const buildUpstreamStats = (rows) => {
@@ -531,25 +668,73 @@
 
       // levels[0] 最靠近目前節點 → 反轉後由外而內、由左而右排列
       const ordered = [...levels].reverse();
+
+      // 上游各關（不含最後的直屬上一關）橫跨兩個以上單位 → 改成兩段式：
+      // 先在左欄點開單位清單，選了單位才顯示該單位的人與鏈，避免全部攤開很亂
+      const upstreamUnits = [...new Set(
+        levels.slice(1).flat().map((g) => splitRoleName(g.representative.roleName).unit),
+      )];
+      const drillDown = !rowUnit && upstreamUnits.length > 1;
+
       const cells = ordered.map((groups, col) => {
         const isDirectPrev = col === ordered.length - 1; // 最後一格 = 目前節點的上一關
-        const arrow = col === 0 ? '' : '<span class="ar-arrow">›</span>';
-        return `<td>${arrow}${isDirectPrev ? renderNodesCell(groups, rowUnit) : renderChipsCell(groups, rowUnit)}</td>`;
+        // 尚未選單位時整列是空的，箭頭會變成孤零零的符號 → 一起收起來
+        const arrow = col === 0 ? '' : `<span class="ar-arrow"${drillDown ? ' hidden' : ''}>›</span>`;
+        // 節點格：箭頭與節點包成 flex 才會同一行；同一關有多個節點時仍上下堆疊
+        // （直屬上一關是整列的錨點，不參與單位篩選，永遠顯示）
+        const content = isDirectPrev
+          ? renderNodesCell(groups, rowUnit)
+          : renderChipsCell(groups, rowUnit, drillDown) +
+            (drillDown && col === 0 ? '<span class="ar-unit-hint" data-ar-unit-hint>← 先在左欄選單位</span>' : '');
+
+        return `<td class="${isDirectPrev ? '' : 'ar-chips'}">` +
+          `<div class="ar-cell-row">${arrow}<div>${content}</div></div></td>`;
       }).join('');
 
-      // 補足右側空白欄，讓「→ 本關」永遠在同一欄
+      // 空白欄補在左邊：每列的「直屬上一關」對齊在同一欄，
+      // 同一欄＝離本關同樣的距離；分支較短就左邊留白（正確表達它比較短）
       const padding = '<td></td>'.repeat(colCount - ordered.length);
 
       // 搜尋用關鍵字：單位 + 該列所有角色全名（不受單位收合影響）
       const keywords = [rowUnit, ...levels.flat().map((g) => g.representative.roleName)]
         .join(' ').toLowerCase().replace(/"/g, '');
 
-      return `<tr data-ar-search="${keywords}"><td class="ar-unit">${rowUnit || '—'}</td>${cells}${padding}<td class="ar-to">→</td></tr>`;
+      // 左欄：單一單位就直接寫；混合單位時是可點開的單位選擇器
+      const unitCount = new Set(
+        levels.flat().map((g) => splitRoleName(g.representative.roleName).unit).filter(Boolean),
+      ).size;
+      const allLabel = `多單位（${upstreamUnits.length}）`;
+
+      let unitCell;
+      if (rowUnit) {
+        unitCell = rowUnit;
+      } else if (drillDown) {
+        unitCell = `
+          <button type="button" class="ar-unit-pick" data-ar-units>
+            <span class="ar-caret">▸</span><span data-ar-unit-label>${allLabel}</span>
+          </button>
+          <div class="ar-unit-list" data-ar-unit-list hidden>
+            ${upstreamUnits.map((u) => `
+              <button type="button" class="ar-unit-opt" data-ar-unit="${u}">${u || '（未標單位）'}</button>`).join('')}
+            <button type="button" class="ar-unit-opt" data-ar-unit="${ALL_UNITS}"
+              data-ar-all-label="${allLabel}">全部顯示</button>
+          </div>`;
+      } else {
+        unitCell = unitCount > 1 ? `多單位（${unitCount}）` : '—';
+      }
+
+      return `<tr data-ar-search="${keywords}"><td class="ar-unit">${unitCell}</td>${padding}${cells}<td class="ar-to">→</td></tr>`;
+    }).join('');
+
+    // 表頭由右往左數：最右邊的上游欄就是「上一關」，再往左是上二關…
+    const headers = Array.from({ length: colCount }, (_, col) => {
+      const distance = colCount - col;
+      return `<th>${distance === 1 ? '上一關' : `上${distance}關`}</th>`;
     }).join('');
 
     const tableHtml = `
       <table class="ar-grid">
-        <thead><tr><th>單位</th><th colspan="${colCount + 1}">上游　由左至右 ＝ 送件方向</th></tr></thead>
+        <thead><tr><th>單位</th>${headers}<th></th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
     `;
@@ -804,9 +989,32 @@
     },
   );
 
-  // 對外暴露，供 03-next-role-dropdown.js 在 dropdown change 後手動呼叫
+  /**
+   * 把指定角色的簽核鏈畫進任意容器（列表頁的「查簽核鏈」工具用）。
+   *
+   * 與 refresh() 的差別：不碰 kintone 記錄 context、不找空白欄位，
+   * 純粹「給我容器與 role_id，我畫給你」。
+   *
+   * @param {HTMLElement} targetEl - 要畫進去的容器（內容會被覆蓋）
+   * @param {string} roleId
+   * @param {Map} [roleMap] - 已載入的角色表；不給就自己抓一次
+   */
+  const renderChainInto = async (targetEl, roleId, roleMap) => {
+    const map = roleMap ?? await fetchRoleMap();
+    // 只補當前鏈上 GROUP 角色的成員（同一份 roleMap 重複呼叫是安全的）
+    await fetchGroupMembers(getVisibleRoleIds(roleId, map), map);
+    targetEl.innerHTML = renderFullChainHtml(roleId, map);
+    bindPreviewEvents(targetEl);
+  };
+
+  // 對外暴露：
+  //   refresh    — 03-next-role-dropdown.js 在 dropdown change 後手動呼叫
+  //   loadRoles  — 取得整份角色表（列表頁工具可載一次重複使用）
+  //   renderInto — 把某個角色的鏈畫進任意容器
   window.ApprovalRouting = window.ApprovalRouting || {};
   window.ApprovalRouting.ChainPreview = Object.freeze({
     refresh: renderChainPreview,
+    loadRoles: fetchRoleMap,
+    renderInto: renderChainInto,
   });
 })();
