@@ -68,21 +68,21 @@ describe('buildChain()', () => {
     expect(chain).toHaveLength(3);
 
     // 第 1 關
-    expect(chain[0].step_no.value).toBe(1);
-    expect(chain[0].step_name.value).toBe('研發課課長');
-    expect(chain[0].expected_signers.value).toEqual([{ code: 'chen.wei' }]);
+    expect(chain[0].value.step_no.value).toBe('1');
+    expect(chain[0].value.step_name.value).toBe('研發課課長');
+    expect(chain[0].value.expected_signers.value).toEqual([{ code: 'chen.wei' }]);
 
     // 第 2 關（個人 holder）
-    expect(chain[1].step_name.value).toBe('研發部部長');
-    expect(chain[1].expected_signers.value).toEqual([{ code: 'lin.mingzhi' }]);
+    expect(chain[1].value.step_name.value).toBe('研發部部長');
+    expect(chain[1].value.expected_signers.value).toEqual([{ code: 'lin.mingzhi' }]);
 
     // 第 3 關（終點）
-    expect(chain[2].step_name.value).toBe('總經理');
-    expect(chain[2].expected_signers.value).toEqual([{ code: 'wang.ceo' }]);
+    expect(chain[2].value.step_name.value).toBe('總經理');
+    expect(chain[2].value.expected_signers.value).toEqual([{ code: 'wang.ceo' }]);
 
     // 子表格格式確認：signed_by / signed_at 為空
-    expect(chain[0].signed_by.value).toEqual([]);
-    expect(chain[0].signed_at.value).toBe('');
+    expect(chain[0].value.signed_by.value).toEqual([]);
+    expect(chain[0].value.signed_at.value).toBe('');
   });
 
   it('✅ 員工未設定起點角色：回傳 ok=false + 明確錯誤訊息', async () => {
@@ -207,8 +207,8 @@ describe('buildChain()', () => {
     const { ok, chain } = await Engine().buildChain('user.mixed');
 
     expect(ok).toBe(true);
-    expect(chain[0].signing_mode.value).toBe('任一人簽');
-    expect(chain[1].signing_mode.value).toBe('全員會簽');
+    expect(chain[0].value.signing_mode.value).toBe('任一人簽');
+    expect(chain[1].value.signing_mode.value).toBe('全員會簽');
   });
 
 });

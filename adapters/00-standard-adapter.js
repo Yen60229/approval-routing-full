@@ -271,8 +271,8 @@
       rec[AF.CURRENT_STEP].value = '0';
       // 先把第 1 關的人與去向放好：kintone 解析「指定欄位」執行者、以及動作的 filterCond，
       // 讀的都是按鈕按下**前**的欄位值，所以送出鈕按下時這些必須已經是第 1 關的內容
-      rec[AF.CURRENT_APPROVERS].value = chain[0][CF.EXPECTED_SIGNERS].value;
-      rec[AF.NEXT_STATE].value = chain[0][CF.STEP_STATE].value;
+      rec[AF.CURRENT_APPROVERS].value = chain[0].value[CF.EXPECTED_SIGNERS].value;
+      rec[AF.NEXT_STATE].value = chain[0].value[CF.STEP_STATE].value;
       rec[AF.REJECT_STATE].value = ST.REJECTED;
 
       return event;

@@ -261,9 +261,10 @@ describe('submit', () => {
     return r;
   };
 
+  // finalizeChain 產出的是子表格列格式 { value: {...} }，不是扁平欄位物件
   const builtChain = [
-    chainStep(1, 'ROLE_P1', '研發課_職員', ['user.p1']).value,
-    chainStep(2, 'ROLE_ACC', '會計_經辦', ['user.acc'], HANDLER).value,
+    chainStep(1, 'ROLE_P1', '研發課_職員', ['user.p1']),
+    chainStep(2, 'ROLE_ACC', '會計_經辦', ['user.acc'], HANDLER),
   ];
 
   it('🔑 草稿送出：寫入鏈、total_steps、current_step=0、第 1 關的人與去向', async () => {
@@ -316,7 +317,7 @@ describe('submit', () => {
     // 舊的編號模型要檢查 chain.length > max_depth，固定狀態模型不需要
     window.ApprovalRouting.buildChainForForm = vi.fn().mockResolvedValue({
       ok: true,
-      chain: Array.from({ length: 15 }, (_, i) => chainStep(i + 1, `ROLE_${i}`, `第${i}關`, ['u']).value),
+      chain: Array.from({ length: 15 }, (_, i) => chainStep(i + 1, `ROLE_${i}`, `第${i}關`, ['u'])),
       error: null,
     });
 

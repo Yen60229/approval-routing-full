@@ -35,7 +35,7 @@ const setupRoleMap = (roleMap) =>
 const setupGroupMembers = (membersMap) =>
   getGroupMembers.mockImplementation(async (code) => membersMap[code] ?? []);
 
-const names = (chain) => chain.map((s) => s.step_name.value);
+const names = (chain) => chain.map((s) => s.value.step_name.value);
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -171,9 +171,9 @@ describe('個人段 + 職能段拼接', () => {
 
     expect(ok).toBe(true);
     expect(names(chain)).toEqual(['研發課_職員', '研發課_課長', '會計_經辦', '總務_部長']);
-    expect(chain[0].step_no.value).toBe(1);
-    expect(chain[3].step_no.value).toBe(4);
-    expect(chain[3].expected_signers.value).toEqual([{ code: 'head.ga' }]); // 群組成員即時解析
+    expect(chain[0].value.step_no.value).toBe('1');
+    expect(chain[3].value.step_no.value).toBe('4');
+    expect(chain[3].value.expected_signers.value).toEqual([{ code: 'head.ga' }]); // 群組成員即時解析
   });
 
   it('✅ 純職能流程（完全沒有員工鏈段）：不查起點角色', async () => {
@@ -374,7 +374,7 @@ describe('step_signing_mode 覆寫', () => {
     const { ok, chain } = await RE().buildChainForForm('emp', 1001);
 
     expect(ok).toBe(true);
-    expect(chain[0].signing_mode.value).toBe('全員會簽'); // 角色表原值是「任一人簽」
+    expect(chain[0].value.signing_mode.value).toBe('全員會簽'); // 角色表原值是「任一人簽」
   });
 
   it('✅ 空值（沿用角色表）：不覆寫，用角色表快照', async () => {
@@ -385,7 +385,7 @@ describe('step_signing_mode 覆寫', () => {
 
     const { chain } = await RE().buildChainForForm('emp', 1001);
 
-    expect(chain[0].signing_mode.value).toBe('任一人簽');
+    expect(chain[0].value.signing_mode.value).toBe('任一人簽');
   });
 
   it('✅ 員工鏈段也可以指定「全員會簽」，該關停在「會簽中」狀態', async () => {
@@ -400,8 +400,8 @@ describe('step_signing_mode 覆寫', () => {
     const { ok, chain } = await RE().buildChainForForm('emp', 1001);
 
     expect(ok).toBe(true);
-    expect(chain.every((s) => s.signing_mode.value === '全員會簽')).toBe(true);
-    expect(chain.every((s) => s.step_state.value === '會簽中')).toBe(true);
+    expect(chain.every((s) => s.value.signing_mode.value === '全員會簽')).toBe(true);
+    expect(chain.every((s) => s.value.step_state.value === '會簽中')).toBe(true);
   });
 
 });

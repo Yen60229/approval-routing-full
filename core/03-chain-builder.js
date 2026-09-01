@@ -29,6 +29,10 @@
  *                              續接段誤用此規則會無聲吃掉一位上級簽核者
  *   2026-09-01  Jimmy/Claude  assembleChainStep 帶入 step_state（這一關停在哪個流程狀態）。
  *                              狀態改為固定 6 個且可自迴圈後，adapter 靠這欄決定下一站
+ *   2026-09-01  Jimmy/Claude  assembleChainStep 改回傳子表格列格式 `{ value: {...} }`。
+ *                              原本回扁平欄位物件，kintone 寫入時會逐列報
+ *                              「event.record['approver_chain'].value[n] 錯誤」；
+ *                              adapter 的讀取端一直是照 `row.value[...]` 寫的，兩邊本來就對不上
  */
 (() => {
   'use strict';
@@ -87,7 +91,7 @@
    * @param {string} [stepState=STATUS.APPROVING]
    *   這一關要停在哪個流程狀態（簽核中／經辦人確認中）。存快照而非跑到時回頭查路由表：
    *   路由改版後，在途單仍照送出當下的樣子跑完。
-   * @returns {Object}
+   * @returns {Object} 子表格列格式 `{ value: { 欄位代碼: {value} } }`
    */
   const assembleChainStep = (
     roleRecord, holders, stepNo, signingModeOverride = null, stepState = STATUS.APPROVING
@@ -102,15 +106,22 @@
     // 「經辦人確認中」被所有任一人簽的關卡共用，型別只能是 ANY。
     const effectiveState = signingMode === SM.ALL ? STATUS.COSIGNING : stepState;
 
+    // ⚠️ 子表格的每一列必須包成 `{ value: {欄位...} }`，不能是扁平的欄位物件——
+    //    直接塞扁平物件，kintone 會回「event.record['approver_chain'].value[n] 錯誤」。
+    //    新增的列不用給 id，kintone 會自己配。
     return {
-      [CF.STEP_NO]:          { value: stepNo },
-      [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
-      [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
-      [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
-      [CF.STEP_STATE]:       { value: effectiveState },
-      [CF.SIGNING_MODE]:     { value: signingMode },
-      [CF.SIGNED_BY]:        { value: [] },
-      [CF.SIGNED_AT]:        { value: '' },
+      value: {
+        // NUMBER 欄位一律寫字串：kintone 對數值欄的期望型別是字串，
+        // 給數字雖然多半也吃得下，但子表格內比較嚴格
+        [CF.STEP_NO]:          { value: String(stepNo) },
+        [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
+        [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
+        [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
+        [CF.STEP_STATE]:       { value: effectiveState },
+        [CF.SIGNING_MODE]:     { value: signingMode },
+        [CF.SIGNED_BY]:        { value: [] },
+        [CF.SIGNED_AT]:        { value: '' },
+      },
     };
   };
 
