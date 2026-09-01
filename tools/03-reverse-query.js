@@ -1,7 +1,7 @@
 /**
  * 反向查詢 — 「哪些員工的簽核鏈會經過我」
  *
- * 在員工起點對照表列表頁加入「反向查詢」按鈕，
+ * 在員工起點對照表列表頁的「查詢」選單提供「反向查詢」，
  * 輸入目標人員代碼，找出哪些角色包含此人、
  * 以及哪些員工的簽核鏈會走到這些角色。
  *
@@ -16,6 +16,7 @@
  *   - core/01-config.js（Config）
  *   - core/02-api-client.js（ApiClient）
  *   - core/04-utils.js（Utils）
+ *   - core/09-tool-registry.js（ToolRegistry：工具列選單）
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
@@ -35,7 +36,6 @@
   const { safeHandler } = window.ApprovalRouting.Utils;
 
   const MAX_DEPTH = 20;
-  const BTN_ID = 'ar-reverse-query-btn';
 
   // -------------------------------------------------------------------
   // 反向查詢邏輯
@@ -228,33 +228,13 @@
     });
   };
 
-  const mountButton = () => {
-    if (document.getElementById(BTN_ID)) return;
-
-    const btn = document.createElement('button');
-    btn.id = BTN_ID;
-    btn.textContent = '反向查詢';
-    btn.style.cssText = 'font-size:14px; padding:8px 20px; background:#00695c; color:#fff; border:none; border-radius:4px; cursor:pointer; margin-left:8px;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runAndShow();
-      } catch (err) {
-        console.error('[ApprovalRouting] 反向查詢錯誤', err);
-        await Swal.fire({ icon: 'error', title: '查詢失敗', text: err.message });
-      }
-    });
-
-    const toolbar = document.querySelector('.gaia-argoui-app-index-toolbar') ||
-                    document.querySelector('.contents-actionmenu-gaia');
-    if (toolbar) toolbar.appendChild(btn);
-  };
-
-  // --- 事件綁定 ---
-  kintone.events.on(
-    ['app.record.index.show'],
-    safeHandler(async (event) => {
-      mountButton();
-      return event;
-    })
-  );
+  // 掛在共用工具列（core/09-tool-registry.js）的「query」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'reverse-query',
+    group: 'query',
+    label: '反向查詢',
+    hint:  '查「哪些員工的簽核鏈會經過某個人」',
+    apps:  [APP_ID.EMPLOYEE_ENTRY],
+    run:   runAndShow,
+  });
 })();

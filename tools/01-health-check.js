@@ -1,7 +1,7 @@
 /**
  * 健康檢查工具 — 找循環鏈、斷鏈、孤立角色、空 holder
  *
- * 在角色定義表列表頁加入「健康檢查」按鈕，
+ * 在角色定義表列表頁的「體檢」選單提供「健康檢查」，
  * 點擊後掃描整張角色表，以報告方式呈現問題。
  *
  * 【問題類型】
@@ -16,6 +16,7 @@
  *   - core/01-config.js（Config）
  *   - core/02-api-client.js（ApiClient）
  *   - core/04-utils.js（Utils）
+ *   - core/09-tool-registry.js（ToolRegistry：工具列選單）
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
@@ -30,7 +31,6 @@
   const { safeHandler } = window.ApprovalRouting.Utils;
 
   const MAX_DEPTH = 20;
-  const BTN_ID = 'ar-health-check-btn';
 
   // -------------------------------------------------------------------
   // 檢查邏輯
@@ -249,33 +249,13 @@
     });
   };
 
-  const mountButton = () => {
-    if (document.getElementById(BTN_ID)) return;
-
-    const btn = document.createElement('button');
-    btn.id = BTN_ID;
-    btn.textContent = '健康檢查';
-    btn.style.cssText = 'font-size:14px; padding:8px 20px; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer; margin-left:8px;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runAndShow();
-      } catch (err) {
-        console.error('[ApprovalRouting] 健康檢查錯誤', err);
-        await Swal.fire({ icon: 'error', title: '檢查失敗', text: err.message });
-      }
-    });
-
-    const toolbar = document.querySelector('.gaia-argoui-app-index-toolbar') ||
-                    document.querySelector('.contents-actionmenu-gaia');
-    if (toolbar) toolbar.appendChild(btn);
-  };
-
-  // --- 事件綁定 ---
-  kintone.events.on(
-    ['app.record.index.show'],
-    safeHandler(async (event) => {
-      mountButton();
-      return event;
-    })
-  );
+  // 掛在共用工具列（core/09-tool-registry.js）的「inspect」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'health-check',
+    group: 'inspect',
+    label: '健康檢查',
+    hint:  '循環鏈、斷鏈、孤立角色、沒有簽核者的關卡',
+    apps:  [APP_ID.ROLE_DEFINITION],
+    run:   runAndShow,
+  });
 })();

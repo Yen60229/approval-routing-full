@@ -768,30 +768,13 @@
     showReport(model, runTool);
   };
 
-  kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
-    if (document.getElementById(CONFIG.BTN_ID)) return event;
-    // 兩張表的清單頁都放按鈕（查的是同一組資料）
-    const appId = Number(kintone.app.getId());
-    if (appId !== APP_ID.ROLE_DEFINITION && appId !== APP_ID.EMPLOYEE_ENTRY) return event;
-
-    const btn = document.createElement('button');
-    btn.id = CONFIG.BTN_ID;
-    btn.textContent = 'role_id 位數對照';
-    btn.style.cssText =
-      'font-size:14px; padding:8px 20px; margin-left:8px; background:#8e6ac2; color:#fff; border:none; border-radius:4px; cursor:pointer;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runTool();
-      } catch (err) {
-        console.error('[ApprovalRouting] role_id 位數對照錯誤', err);
-        Swal.close();
-        await showWarning('掃描失敗', err.message);
-      }
-    });
-
-    const headerSpace = kintone.app.getHeaderMenuSpaceElement?.() ||
-                        document.querySelector('.gaia-argoui-app-index-toolbar');
-    if (headerSpace) headerSpace.appendChild(btn);
-    return event;
-  }));
+  // 掛在共用工具列（core/09-tool-registry.js）的「inspect」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'role-id-format-check',
+    group: 'inspect',
+    label: 'role_id 位數對照',
+    hint:  '找出不是 4 碼的代碼，連同引用它的地方一起修',
+    apps:  [APP_ID.ROLE_DEFINITION, APP_ID.EMPLOYEE_ENTRY],
+    run:   runTool,
+  });
 })();

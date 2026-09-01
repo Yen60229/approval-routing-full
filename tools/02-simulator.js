@@ -1,7 +1,7 @@
 /**
  * 測試模擬器 — 任選員工模擬簽核鏈（不寫入資料）
  *
- * 在角色定義表或員工起點對照表列表頁加入「模擬器」按鈕，
+ * 在角色定義表或員工起點對照表列表頁的「查詢」選單提供「模擬器」，
  * HR / IT 可輸入員工代碼，立即預覽該員工送單後的完整簽核鏈。
  *
  * 【依賴】
@@ -16,14 +16,13 @@
 (() => {
   'use strict';
 
-  const { ROLE_FIELDS: RF, CHAIN_FIELDS: CF } = window.ApprovalRouting.Config;
+  const { APP_ID, ROLE_FIELDS: RF, CHAIN_FIELDS: CF } = window.ApprovalRouting.Config;
   const { simulateChain } = window.ApprovalRouting.Engine;
   const { safeHandler, clearRoleCache } = {
     ...window.ApprovalRouting.Utils,
     clearRoleCache: window.ApprovalRouting.ApiClient.clearRoleCache,
   };
 
-  const BTN_ID = 'ar-simulator-btn';
 
   // -------------------------------------------------------------------
   // 模擬結果渲染
@@ -117,33 +116,13 @@
   // 列表頁插入按鈕
   // -------------------------------------------------------------------
 
-  const mountButton = () => {
-    if (document.getElementById(BTN_ID)) return;
-
-    const btn = document.createElement('button');
-    btn.id = BTN_ID;
-    btn.textContent = '模擬器';
-    btn.style.cssText = 'font-size:14px; padding:8px 20px; background:#7b1fa2; color:#fff; border:none; border-radius:4px; cursor:pointer; margin-left:8px;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runSimulator();
-      } catch (err) {
-        console.error('[ApprovalRouting] 模擬器錯誤', err);
-        await Swal.fire({ icon: 'error', title: '模擬器錯誤', text: err.message });
-      }
-    });
-
-    const toolbar = document.querySelector('.gaia-argoui-app-index-toolbar') ||
-                    document.querySelector('.contents-actionmenu-gaia');
-    if (toolbar) toolbar.appendChild(btn);
-  };
-
-  // --- 事件綁定 ---
-  kintone.events.on(
-    ['app.record.index.show'],
-    window.ApprovalRouting.Utils.safeHandler(async (event) => {
-      mountButton();
-      return event;
-    })
-  );
+  // 掛在共用工具列（core/09-tool-registry.js）的「query」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'simulator',
+    group: 'query',
+    label: '模擬器',
+    hint:  '輸入員工代碼，預覽他送單後的完整簽核鏈',
+    apps:  [APP_ID.ROLE_DEFINITION, APP_ID.EMPLOYEE_ENTRY],
+    run:   runSimulator,
+  });
 })();

@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 
 await import('../core/08-directory.js');
+await import('../core/09-tool-registry.js');
 await import('../tools/11-org-sync-check.js');
 
 const I = () => window.ApprovalRouting.OrgSyncInternals;

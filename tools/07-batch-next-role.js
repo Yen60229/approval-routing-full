@@ -1,7 +1,7 @@
 /**
  * 批次設定下一關角色（kintone App 685）
  *
- * 在角色定義表列表頁加入「批次設定下一關」按鈕。以 **role_name 為單位**列出所有
+ * 在角色定義表列表頁的「維護」選單提供「批次設定下一關」。以 **role_name 為單位**列出所有
  * 啟用中的角色（同名角色在本系統視為同一關卡，故一併處理），勾選多個來源角色 →
  * 挑一個「下一關角色」→ 一次寫入所有選中角色的 next_role_id。
  *
@@ -19,6 +19,7 @@
  * 【依賴】
  *   - core/01-config.js（Config）
  *   - core/04-utils.js（Utils）
+ *   - core/09-tool-registry.js（ToolRegistry：工具列選單）
  *
  * 【變更履歷】
  *   2026-08-19  Jimmy/Claude  初版建立
@@ -499,27 +500,13 @@
     showPanel(model, runTool);
   };
 
-  kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
-    if (document.getElementById(CONFIG.BTN_ID)) return event;
-
-    const btn = document.createElement('button');
-    btn.id = CONFIG.BTN_ID;
-    btn.textContent = '批次設定下一關';
-    btn.style.cssText =
-      'font-size:14px; padding:8px 20px; margin-left:8px; background:#e67e22; color:#fff; border:none; border-radius:4px; cursor:pointer;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runTool();
-      } catch (err) {
-        console.error('[ApprovalRouting] 批次設定下一關錯誤', err);
-        Swal.close();
-        await showWarning('操作失敗', err.message);
-      }
-    });
-
-    const headerSpace = kintone.app.getHeaderMenuSpaceElement?.() ||
-                        document.querySelector('.gaia-argoui-app-index-toolbar');
-    if (headerSpace) headerSpace.appendChild(btn);
-    return event;
-  }));
+  // 掛在共用工具列（core/09-tool-registry.js）的「maintain」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'batch-next-role',
+    group: 'maintain',
+    label: '批次設定下一關',
+    hint:  '勾選多個關卡，一次設定成同一個下一關',
+    apps:  [APP_ID.ROLE_DEFINITION],
+    run:   runTool,
+  });
 })();

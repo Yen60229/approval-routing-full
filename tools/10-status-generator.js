@@ -59,6 +59,7 @@
   'use strict';
 
   const {
+    APP_ID,
     ROUTE_FIELDS: RTF,
     ADAPTER_FIELDS: AF,
     STATUS_TEMPLATE: ST,
@@ -247,13 +248,13 @@
     // 同一 from 的同名動作：允許（這是分歧的標準手法），但不可有兩條都沒有條件
     const byFromName = new Map();
     for (const a of actions) {
-      const key = `${a.from} ${a.name}`;
+      const key = `${a.from}\u0000${a.name}`;
       if (!byFromName.has(key)) byFromName.set(key, []);
       byFromName.get(key).push(a);
     }
     for (const [key, group] of byFromName) {
       if (group.length < 2) continue;
-      const [from, name] = key.split(' ');
+      const [from, name] = key.split('\u0000');
       const blank = group.filter((a) => !a.filterCond).length;
       if (blank > 1) {
         errs.push(`狀態「${from}」有 ${blank} 條沒有條件的同名動作「${name}」，按鈕行為不可預期。`);
@@ -567,21 +568,15 @@
     return res.isConfirmed ? records[res.value] : null;
   };
 
-  kintone.events.on('app.record.index.show', safeHandler(async (event) => {
-    const BTN_ID = 'ar-status-generator-btn';
-    if (document.getElementById(BTN_ID)) return event;
-
-    const space = kintone.app.getHeaderMenuSpaceElement();
-    if (!space) return event;
-
-    const btn = document.createElement('button');
-    btn.id = BTN_ID;
-    btn.textContent = '部署流程設定';
-    btn.className = 'kintoneplugin-button-normal';
-    btn.style.cssText = 'margin-left:8px;font-size:15px;padding:6px 16px;cursor:pointer';
-
-    btn.onclick = safeHandler(async () => {
-      await ensureFresh(); // 這是部署不是預覽，快取一律重讀
+  // 掛在共用工具列（core/09-tool-registry.js）的「deploy」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'status-generator',
+    group: 'deploy',
+    label: '部署流程設定',
+    hint:  '產生並部署申請 App 的 7 狀態流程圖',
+    apps:  [APP_ID.FORM_ROUTE_CONFIG],
+    run:   async () => {
+      await ensureFresh();   // 這是部署不是預覽，快取一律重讀
       const records = await fetchAllRouteConfigs();
       if (records.length === 0) {
         await showWarning('還沒有任何路由設定', '請先新增一筆表單路由設定。');
@@ -589,11 +584,8 @@
       }
       const picked = await pickRouteConfig(records);
       if (picked) await runPipeline(picked);
-    });
-
-    space.appendChild(btn);
-    return event;
-  }));
+    },
+  });
 
   // 供測試（純函式部分）
   window.ApprovalRouting = window.ApprovalRouting || {};

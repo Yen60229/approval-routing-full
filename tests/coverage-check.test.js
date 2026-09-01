@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 
 // 05 解構 core/08-directory 的共用函式，必須先載入
 await import('../core/08-directory.js');
+await import('../core/09-tool-registry.js');
 await import('../tools/05-coverage-check.js');
 
 const Internals = () => window.ApprovalRouting.CoverageInternals;

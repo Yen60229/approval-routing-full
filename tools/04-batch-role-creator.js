@@ -2567,23 +2567,17 @@
     document.getElementById('br-btn-submit').onclick = submitBatch;
   }
 
-  kintone.events.on('app.record.index.show', function (event) {
-    injectCSS();
-    injectModal();
-
-    if (document.getElementById('btn-open-batch-role')) return event;
-
-    const headerMenu = kintone.app.getHeaderMenuSpaceElement();
-    if (!headerMenu) return event;
-
-    const btn = document.createElement('button');
-    btn.id = 'btn-open-batch-role';
-    btn.textContent = '批次角色建立';
-    btn.onclick = () => {
+  // 掛在共用工具列（core/09-tool-registry.js）的「maintain」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'batch-role-creator',
+    group: 'maintain',
+    label: '批次角色建立',
+    hint:  '用 CSV 一次建立或更新多筆角色記錄',
+    apps:  [window.ApprovalRouting.Config.APP_ID.ROLE_DEFINITION],
+    run:   () => {
+      injectCSS();
+      injectModal();
       document.getElementById('batch-role-modal').style.display = 'block';
-    };
-
-    headerMenu.appendChild(btn);
-    return event;
+    },
   });
 })();

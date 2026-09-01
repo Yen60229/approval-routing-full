@@ -4,7 +4,7 @@
  * 【前提規則】一筆角色記錄只掛一個人（見 docs/對話脈絡.md §9.5）。
  * 因此同一關有 N 個簽核者 = N 筆同名記錄，**同名多筆本身是正常的**。
  *
- * 在角色定義表列表頁加入「簽核者重複檢查」按鈕，掃描所有**啟用中**且
+ * 在角色定義表列表頁的「體檢」選單提供「簽核者重複檢查」，掃描所有**啟用中**且
  * holder_type =「指定個人」的角色記錄，分三類呈現：
  *
  *   ① 一筆記錄掛了多人 — holder_user 有兩筆以上（不同人或同一人被列兩次）
@@ -717,27 +717,13 @@
     showReport(model, runTool);
   };
 
-  kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
-    if (document.getElementById(CONFIG.BTN_ID)) return event;
-
-    const btn = document.createElement('button');
-    btn.id = CONFIG.BTN_ID;
-    btn.textContent = '簽核者重複檢查';
-    btn.style.cssText =
-      'font-size:14px; padding:8px 20px; margin-left:8px; background:#16a085; color:#fff; border:none; border-radius:4px; cursor:pointer;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runTool();
-      } catch (err) {
-        console.error('[ApprovalRouting] 簽核者重複檢查錯誤', err);
-        Swal.close();
-        await showWarning('掃描失敗', err.message);
-      }
-    });
-
-    const headerSpace = kintone.app.getHeaderMenuSpaceElement?.() ||
-                        document.querySelector('.gaia-argoui-app-index-toolbar');
-    if (headerSpace) headerSpace.appendChild(btn);
-    return event;
-  }));
+  // 掛在共用工具列（core/09-tool-registry.js）的「inspect」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'holder-duplicate-check',
+    group: 'inspect',
+    label: '簽核者重複檢查',
+    hint:  '一筆掛多人、同一人在同一關重複、一人身兼多關',
+    apps:  [APP_ID.ROLE_DEFINITION],
+    run:   runTool,
+  });
 })();

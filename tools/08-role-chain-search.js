@@ -1,7 +1,7 @@
 /**
  * 角色簽核鏈快搜（kintone App 685 列表頁）
  *
- * 在角色定義表列表頁加入「查簽核鏈」按鈕：輸入角色名稱即時過濾，
+ * 在角色定義表列表頁的「查詢」選單提供「查簽核鏈」：輸入角色名稱即時過濾，
  * 選一個關卡就看到它完整的上下游簽核鏈（沿用詳情頁那張預覽圖）。
  *
  * 【同名多筆的處理】
@@ -324,29 +324,13 @@
     showPanel(roleMap, recordIdByRoleId);
   };
 
-  kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
-    if (document.getElementById(CONFIG.BTN_ID)) return event;
-    // 本檔也可能被其他 App 載入，只在角色定義表加按鈕
-    if (Number(kintone.app.getId()) !== APP_ID.ROLE_DEFINITION) return event;
-
-    const btn = document.createElement('button');
-    btn.id = CONFIG.BTN_ID;
-    btn.textContent = '查簽核鏈';
-    btn.style.cssText =
-      'font-size:14px; padding:8px 20px; margin-left:8px; background:#2980b9; color:#fff; border:none; border-radius:4px; cursor:pointer;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runTool();
-      } catch (err) {
-        console.error('[ApprovalRouting] 查簽核鏈錯誤', err);
-        Swal.close();
-        await showWarning('載入失敗', err.message);
-      }
-    });
-
-    const headerSpace = kintone.app.getHeaderMenuSpaceElement?.() ||
-                        document.querySelector('.gaia-argoui-app-index-toolbar');
-    if (headerSpace) headerSpace.appendChild(btn);
-    return event;
-  }));
+  // 掛在共用工具列（core/09-tool-registry.js）的「query」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'role-chain-search',
+    group: 'query',
+    label: '查簽核鏈',
+    hint:  '輸入角色名稱，看它完整的上下游簽核鏈',
+    apps:  [APP_ID.ROLE_DEFINITION],
+    run:   runTool,
+  });
 })();

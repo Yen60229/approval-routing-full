@@ -1,7 +1,7 @@
 /**
  * 涵蓋率檢查工具 — 找出「使用中但尚未納入簽核系統」的使用者，並可就地補設定
  *
- * 在角色定義表（685）或員工起點對照表（686）的列表頁加入「未設定名單」按鈕，
+ * 在角色定義表（685）或員工起點對照表（686）的列表頁「體檢」選單提供「未設定名單」，
  * 掃描後以報告呈現七類問題，並提供快速處理：
  *   A. 未設定起點 — 使用中、但沒有可用起點的人（無法送單，最優先處理）：
  *      686 完全沒有記錄，**或**有記錄卻沒填 entry_role_id（後者一樣送不出單，
@@ -2803,27 +2803,13 @@
     buildNewRoleRecords, CHAIN_END_VALUE, CREATE_ROLE_VALUE,
   });
 
-  kintone.events.on(['app.record.index.show'], safeHandler(async (event) => {
-    if (document.getElementById(CONFIG.BTN_ID)) return event;
-
-    const btn = document.createElement('button');
-    btn.id = CONFIG.BTN_ID;
-    btn.textContent = '未設定名單';
-    btn.style.cssText =
-      'font-size:14px; padding:8px 20px; margin-left:8px; background:#8e44ad; color:#fff; border:none; border-radius:4px; cursor:pointer;';
-    btn.addEventListener('click', async () => {
-      try {
-        await runTool();
-      } catch (err) {
-        console.error('[ApprovalRouting] 涵蓋率檢查錯誤', err);
-        Swal.close();
-        await showWarning('掃描失敗', err?.message || String(err));
-      }
-    });
-
-    const headerSpace = kintone.app.getHeaderMenuSpaceElement?.() ||
-                        document.querySelector('.gaia-argoui-app-index-toolbar');
-    if (headerSpace) headerSpace.appendChild(btn);
-    return event;
-  }));
+  // 掛在共用工具列（core/09-tool-registry.js）的「inspect」群組，不再自己長一顆按鈕
+  window.ApprovalRouting.ToolRegistry.register({
+    id:    'coverage-check',
+    group: 'inspect',
+    label: '未設定名單',
+    hint:  '沒起點、沒簽核身分、停用帳號殘留…七類問題',
+    apps:  [APP_ID.ROLE_DEFINITION, APP_ID.EMPLOYEE_ENTRY],
+    run:   runTool,
+  });
 })();
