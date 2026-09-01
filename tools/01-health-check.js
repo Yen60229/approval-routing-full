@@ -21,6 +21,10 @@
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
  *   2026-08-31  Jimmy/Claude  新增第 6 條規則「同名角色設定一致性」（docs/05 評估 #4）
+ *   2026-09-01  Jimmy/Claude  改名「體檢」→「系統健檢」、「健康檢查」→「角色表健檢」；
+ *                              六類問題的 role_id／角色名稱全部改成可點連結，直接開該筆
+ *                              記錄的編輯頁（&mode=edit）。斷鏈的 next_role_id 指向不存在
+ *                              的角色，查不到記錄編號時退回純文字，不給假連結
  */
 (() => {
   'use strict';
@@ -65,10 +69,15 @@
     // 被指向的角色 ID（用來找孤立角色）
     const pointedTo = new Set();
 
+    // role_id → 記錄編號，報告裡每個 role_id 都要能連到編輯頁。
+    // 斷鏈的 next_role_id 指向不存在的角色，查不到就查不到，連結端要自己處理。
+    const ridOf = (id) => roleMap.get(id)?.$id?.value ?? null;
+
     // --- Pass 1：逐角色掃描鏈結構 ---
     for (const [roleId, rec] of roleMap) {
       const isEnd = (rec[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END);
       const nextId = rec[RF.NEXT_ROLE_ID].value;
+      const recordId = rec.$id.value;
 
       // 追蹤被指向的角色
       if (nextId) pointedTo.add(nextId);
@@ -78,10 +87,10 @@
       const groupVal = rec[RF.HOLDER_GROUP].value ?? [];
       const userVal  = rec[RF.HOLDER_USER].value ?? [];
       if (holderType === HT.GROUP && groupVal.length === 0) {
-        issues.noHolder.push({ roleId, roleName: rec[RF.ROLE_NAME].value });
+        issues.noHolder.push({ roleId, roleName: rec[RF.ROLE_NAME].value, recordId });
       }
       if (holderType === HT.USER && userVal.length === 0) {
-        issues.noHolder.push({ roleId, roleName: rec[RF.ROLE_NAME].value });
+        issues.noHolder.push({ roleId, roleName: rec[RF.ROLE_NAME].value, recordId });
       }
 
       // 非終點 + 斷鏈
@@ -90,6 +99,7 @@
           roleId,
           roleName: rec[RF.ROLE_NAME].value,
           nextRoleId: nextId,
+          recordId,
         });
       }
     }
@@ -107,7 +117,10 @@
 
       while (currentId && depth < MAX_DEPTH) {
         if (visited.has(currentId)) {
-          issues.circular.push({ startId, loopAt: currentId });
+          issues.circular.push({
+            startId, loopAt: currentId,
+            startRecordId: ridOf(startId), loopRecordId: ridOf(currentId),
+          });
           foundIssue = true;
           break;
         }
@@ -125,7 +138,7 @@
       }
 
       if (!foundIssue && depth >= MAX_DEPTH) {
-        issues.noEnd.push({ startId });
+        issues.noEnd.push({ startId, recordId: ridOf(startId) });
       }
     }
 
@@ -178,7 +191,9 @@
         roleName,
         records: group.map(({ roleId, rec }) => ({
           roleId,
+          recordId:    rec.$id.value,
           nextRoleId:  rec[RF.NEXT_ROLE_ID].value || '（未設定）',
+          nextRecordId: ridOf(rec[RF.NEXT_ROLE_ID].value),
           isEnd:       (rec[RF.IS_CHAIN_END].value ?? []).includes(CHECKBOX.CHAIN_END),
           signingMode: rec[RF.SIGNING_MODE].value || '（未設定）',
         })),
@@ -206,6 +221,18 @@
         </div>`;
     }
 
+    // role_id（等寬字型呈現）：有記錄編號就連到編輯頁，沒有（多半是斷鏈指向不存在的角色）就純文字
+    const roleLink = (id, recordId) => recordId
+      ? `<a href="${editUrl(recordId)}" target="_blank" rel="noopener"
+           style="font-family:monospace; color:inherit; text-decoration:underline;">${esc(id)}</a>`
+      : `<code>${esc(id)}</code>`;
+
+    // 角色名稱（粗體呈現）：同上，有記錄編號才連結
+    const nameLink = (name, recordId, color) => recordId
+      ? `<a href="${editUrl(recordId)}" target="_blank" rel="noopener"
+           style="color:${color}; text-decoration:underline; font-weight:bold;">${esc(name)}</a>`
+      : `<strong>${esc(name)}</strong>`;
+
     const section = (title, color, items, renderItem) => {
       if (items.length === 0) return '';
       return `
@@ -221,23 +248,21 @@
       <div style="text-align:left; max-height:400px; overflow-y:auto; font-size:14px;">
         <div style="margin-bottom:12px; color:#666;">共掃描 ${totalRoles} 個角色</div>
         ${section('🔴 循環鏈', '#c62828', issues.circular,
-          (i) => `<li>從 <code>${i.startId}</code> 出發，在 <code>${i.loopAt}</code> 形成循環</li>`)}
+          (i) => `<li>從 ${roleLink(i.startId, i.startRecordId)} 出發，在 ${roleLink(i.loopAt, i.loopRecordId)} 形成循環</li>`)}
         ${section('🔴 同名角色設定不一致', '#c62828', issues.inconsistent,
-          (i) => `<li><strong>${i.roleName}</strong>（${i.records.length} 筆記錄，同一關卻設定不同）
+          (i) => `<li><strong>${esc(i.roleName)}</strong>（${i.records.length} 筆記錄，同一關卻設定不同）
             <ul style="margin:4px 0 8px; padding-left:18px; color:#666; font-size:12px;">
-              ${i.records.map((r) => `<li><code>${r.roleId}</code>　下一關 <code>${r.nextRoleId}</code>${r.isEnd ? '　<strong>終點</strong>' : ''}　${r.signingMode}</li>`).join('')}
+              ${i.records.map((r) => `<li>${roleLink(r.roleId, r.recordId)}　下一關 ${roleLink(r.nextRoleId, r.nextRecordId)}${r.isEnd ? '　<strong>終點</strong>' : ''}　${esc(r.signingMode)}</li>`).join('')}
             </ul>
             <span style="font-size:12px; color:#888;">可用「批次設定下一關」工具統一</span></li>`)}
         ${section('🟠 斷鏈', '#e65100', issues.broken,
-          (i) => `<li><strong>${i.roleName}</strong>（${i.roleId}）→ <code>${i.nextRoleId}</code> 不存在</li>`)}
+          (i) => `<li>${nameLink(i.roleName, i.recordId, '#e65100')}（${roleLink(i.roleId, i.recordId)}）→ <code>${esc(i.nextRoleId)}</code> 不存在</li>`)}
         ${section('🟡 空簽核者', '#f57f17', issues.noHolder,
-          (i) => `<li><strong>${i.roleName}</strong>（${i.roleId}）未設定簽核者</li>`)}
+          (i) => `<li>${nameLink(i.roleName, i.recordId, '#f57f17')}（${roleLink(i.roleId, i.recordId)}）未設定簽核者</li>`)}
         ${section('🔵 孤立角色', '#1565c0', issues.orphan,
-          (i) => `<li><a href="${editUrl(i.recordId)}" target="_blank" rel="noopener"
-              style="color:#1565c0; text-decoration:underline;">${esc(i.roleName)}</a>
-              （${esc(i.roleId)}）沒有任何角色或員工指向它</li>`)}
+          (i) => `<li>${nameLink(i.roleName, i.recordId, '#1565c0')}（${roleLink(i.roleId, i.recordId)}）沒有任何角色或員工指向它</li>`)}
         ${section('⚪ 鏈過深', '#555', issues.noEnd,
-          (i) => `<li>從 <code>${i.startId}</code> 出發，超過 ${MAX_DEPTH} 層未到終點</li>`)}
+          (i) => `<li>從 ${roleLink(i.startId, i.recordId)} 出發，超過 ${MAX_DEPTH} 層未到終點</li>`)}
       </div>`;
   };
 
