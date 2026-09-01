@@ -1,11 +1,13 @@
 /**
  * tools/05-coverage-check.js 的純函式單元測試
  *
- * 載入策略：import IIFE → 掛上 window.ApprovalRouting.CoverageInternals
+ * 載入策略：先載 core/08-directory（05 會解構它）→ import IIFE → 掛上 CoverageInternals
  * UI 與 API 呼叫不在此測試範圍，只測分組、配對與起點鏈完整性這幾段純邏輯。
  */
 import { describe, it, expect } from 'vitest';
 
+// 05 解構 core/08-directory 的共用函式，必須先載入
+await import('../core/08-directory.js');
 await import('../tools/05-coverage-check.js');
 
 const Internals = () => window.ApprovalRouting.CoverageInternals;

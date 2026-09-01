@@ -124,14 +124,18 @@
   const { APP_ID, ROLE_FIELDS: RF, ENTRY_FIELDS: EF, CHECKBOX, HOLDER_TYPE_OPTIONS: HT,
           SIGNING_MODE_OPTIONS: SM, ROLE_ID_PREFIX } = window.ApprovalRouting.Config;
   const { safeHandler, kintoneApi, showWarning } = window.ApprovalRouting.Utils;
+  // 後台人事資料與單位／職稱對應共用 core/08-directory.js（tools/11 用的是同一份規則）
+  const {
+    fetchUserApiAll, fetchAllUsers, fetchDirectory, fetchRoleFormFields,
+    guessTitleLevel, guessUnitName,
+  } = window.ApprovalRouting.Directory;
 
   const CONFIG = Object.freeze({
     BTN_ID:      'ar-coverage-check-btn',
     OVERLAY_ID:  'ar-coverage-overlay',
-    USER_PAGE:   100,   // User API 分頁大小上限
     RECORD_PAGE: 500,   // records API 單次上限
+    ORG_PARALLEL: 10,   // 簽核群組成員查詢的並行數（控制瞬間 API 量）
     WRITE_BATCH: 100,   // records 批量寫入上限
-    ORG_PARALLEL: 10,   // 組織成員查詢的並行數（控制瞬間 API 量）
     MAX_WALK:     50,   // 迴圈偵測的最大步數，與 chain-builder 的深度上限同量級
   });
 
@@ -338,51 +342,6 @@
   // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * 由 kintone 職務推測對應的 title_level 選項
-   *
-   * 比對順序（職稱通常落在字串結尾，所以先比結尾）：
-   *   1. 完全相同           職務「課長」       → 課長
-   *   2. 以選項結尾，取最長   職務「資訊本部長」 → 本部長（不是「部長」）
-   *   3. 包含選項，取最靠後   職務「總經理室 擔當」→ 擔當（不是「總經理」）
-   * 都沒中就回空字串，不亂猜，交給 HR 自己選。
-   *
-   * 與 tools/04 同一套規則，兩支工具帶出來的結果才會一致。
-   *
-   * @returns {{value: string, exact: boolean}} value 為空表示無法對應
-   */
-  const guessTitleLevel = (jobTitle, options = []) => {
-    const raw = String(jobTitle || '').trim();
-    if (!raw || !options.length) return { value: '', exact: false };
-
-    const exact = options.find((opt) => opt === raw);
-    if (exact) return { value: exact, exact: true };
-
-    const bySuffix = options
-      .filter((opt) => opt && raw.endsWith(opt))
-      .sort((a, b) => b.length - a.length)[0];
-    if (bySuffix) return { value: bySuffix, exact: false };
-
-    const byPosition = options
-      .filter((opt) => opt && raw.includes(opt))
-      .sort((a, b) => (raw.lastIndexOf(b) - raw.lastIndexOf(a)) || (b.length - a.length))[0];
-
-    return byPosition ? { value: byPosition, exact: false } : { value: '', exact: false };
-  };
-
-  /**
-   * 由 kintone 組織名稱對應 685 的 unit_name 選項
-   *
-   * 單位只接受完全相同（去頭尾空白）——組織名稱像「倉儲（TEPZ）」這種帶括號的，
-   * 用模糊比對很容易配到隔壁單位，配錯就是整組人的簽核鏈都跑錯地方。
-   *
-   * @returns {string} 對不上時回空字串，由 HR 自己挑
-   */
-  const guessUnitName = (orgName, options = []) => {
-    const raw = String(orgName || '').trim();
-    return options.find((opt) => opt.trim() === raw) || '';
-  };
-
-  /**
    * 從既有角色反推 role_name 的分隔符號
    *
    * role_name 目前是計算欄位（單位 - 職稱），計算欄位不接受寫入，新建記錄不必也不能
@@ -467,26 +426,6 @@
     return out;
   };
 
-  /**
-   * User API 通用分頁撈全量（offset + size 迴圈直到不足一頁）
-   * @param {string} path - 如 '/v1/users'
-   * @param {Object} params - 額外參數（code 等）
-   * @param {Function} pluck - 從單頁回應取出項目陣列
-   * @returns {Promise<Array>}
-   */
-  const fetchUserApiAll = async (path, params, pluck) => {
-    const all = [];
-    let offset = 0;
-    while (true) {
-      const resp = await kintone.api(path, 'GET', { ...params, offset, size: CONFIG.USER_PAGE });
-      const items = pluck(resp) || [];
-      all.push(...items);
-      if (items.length < CONFIG.USER_PAGE) break;
-      offset += CONFIG.USER_PAGE;
-    }
-    return all;
-  };
-
   /** kintone records 通用分頁撈全量（offset 適用：兩表資料量在數百～千級） */
   const fetchRecordsAll = async (app, fields, condition) => {
     const all = [];
@@ -502,56 +441,6 @@
       offset += CONFIG.RECORD_PAGE;
     }
     return all;
-  };
-
-  /** 全公司使用者，依「使用狀態」分為使用中與已停用兩組 */
-  const fetchAllUsers = async () => {
-    const users = await fetchUserApiAll('/v1/users', {}, (r) => r.users);
-    const shape = (u) => ({ code: u.code, name: u.name || u.code });
-    return {
-      actives:   users.filter((u) => u.valid !== false).map(shape),
-      inactives: users.filter((u) => u.valid === false).map(shape),
-    };
-  };
-
-  /**
-   * 建立 使用者帳號 → 所屬單位 / 職稱 的對照
-   *
-   * 作法：撈全部組織 → 逐組織撈成員（並行分批），一人可屬多個組織。
-   * kintone 的職稱掛在「人 × 組織」上（userTitles[].title），兼任者可能有多個職稱，
-   * 一併收集去重，讓報告能直接看出這人是不是主管，不用再回後台查。
-   *
-   * @returns {Promise<{orgMap: Map<string, string[]>, titleMap: Map<string, string[]>}>}
-   */
-  const fetchUserOrgMap = async () => {
-    const orgs = await fetchUserApiAll('/v1/organizations', {}, (r) => r.organizations);
-    const orgMap = new Map();
-    const titleMap = new Map();
-
-    for (const part of chunk(orgs, CONFIG.ORG_PARALLEL)) {
-      await Promise.all(part.map(async (org) => {
-        // 回應格式為 { userTitles: [{ user, title }] }，保守起見也相容 users 形式
-        const entries = await fetchUserApiAll(
-          '/v1/organization/users',
-          { code: org.code },
-          (r) => (r.userTitles ? r.userTitles : (r.users || []).map((u) => ({ user: u, title: null }))),
-        );
-        for (const entry of entries) {
-          const u = entry?.user;
-          if (!u?.code) continue;
-
-          if (!orgMap.has(u.code)) orgMap.set(u.code, []);
-          orgMap.get(u.code).push(org.name);
-
-          const title = entry.title?.name || '';
-          if (!title) continue;
-          if (!titleMap.has(u.code)) titleMap.set(u.code, []);
-          const list = titleMap.get(u.code);
-          if (!list.includes(title)) list.push(title);
-        }
-      }));
-    }
-    return { orgMap, titleMap };
   };
 
   /**
@@ -607,44 +496,6 @@
     return { holderCodes, roles, groupMembers, groupNameByCode };
   };
 
-  /**
-   * 讀 685 的表單設定：unit_name / title_level 的下拉選項，以及 role_name 的型別
-   *
-   * 用 REST API 而不是 kintone.app.getFormFields()——後者拿的是「目前這個 App」的欄位，
-   * 這支工具在 685 與 686 兩張表的列表頁都掛著，從 686 開會拿到 686 的欄位。
-   *
-   * 讀不到就回空選項（不是丟例外）：這只影響「就地新建角色」這個附加功能，
-   * 沒必要讓整份涵蓋率報告開不起來。
-   *
-   * @returns {Promise<{unitOptions: string[], titleOptions: string[],
-   *                    roleNameIsCalc: boolean, error: string}>}
-   */
-  const fetchRoleFormFields = async () => {
-    try {
-      const resp = await kintoneApi('/k/v1/app/form/fields.json', 'GET',
-        { app: APP_ID.ROLE_DEFINITION });
-      const props = resp.properties || {};
-      const optionsOf = (code) => Object.values(props[code]?.options || {})
-        .sort((a, b) => Number(a.index) - Number(b.index))
-        .map((o) => o?.label)
-        .filter(Boolean);
-
-      return {
-        unitOptions:  optionsOf(RF.UNIT_NAME),
-        titleOptions: optionsOf(RF.TITLE_LEVEL),
-        // 計算欄位不接受寫入，新建記錄一律不要帶 role_name
-        roleNameIsCalc: (props[RF.ROLE_NAME]?.type || '') === 'CALC',
-        error: '',
-      };
-    } catch (err) {
-      console.warn('[ApprovalRouting] 讀取 685 表單設定失敗，就地新建角色功能停用', err);
-      return {
-        unitOptions: [], titleOptions: [], roleNameIsCalc: true,
-        error: err?.message || String(err),
-      };
-    }
-  };
-
   /** 686 啟用中的起點記錄
    *
    * 「有記錄」與「有起點」是兩件事：記錄在、entry_role_id 卻空白的人一樣送不出單
@@ -693,7 +544,7 @@
     const [{ actives, inactives }, { orgMap, titleMap }, roleCoverage, entryData, roleForm] =
       await Promise.all([
         fetchAllUsers(),
-        fetchUserOrgMap(),
+        fetchDirectory(),
         fetchRoleCoverage(),
         fetchEntryRecords(),
         fetchRoleFormFields(),
