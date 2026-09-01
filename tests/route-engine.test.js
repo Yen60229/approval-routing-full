@@ -209,6 +209,94 @@ describe('個人段 + 職能段拼接', () => {
 
 });
 
+// ── 員工鏈段的續接（2026-09-01 修的兩個 bug）────────────────────────────────
+
+describe('員工鏈段續接', () => {
+
+  beforeEach(() => {
+    setupRoleMap(ROLES_ROUTE_ALL);
+    getEntryRoleId.mockResolvedValue('ROLE_P1');
+  });
+
+  it('✅ 員工鏈段 → 指定角色段 → 員工鏈段：第二段從前一段的下一關續走', async () => {
+    getRouteConfig.mockResolvedValue(makeRouteConfig({
+      formAppId: 1001,
+      steps: [
+        { segmentType: EMP, stopAtTitleLevel: '課長' },
+        { segmentType: FIX, roleId: 'ROLE_ACC' },
+        { segmentType: EMP, stopAtTitleLevel: '部長' },
+      ],
+    }));
+
+    const { ok, chain } = await RE().buildChainForForm('emp', 1001);
+
+    expect(ok).toBe(true);
+    expect(names(chain)).toEqual([
+      '研發課_職員', '研發課_課長',   // 第 1 段：起點 → 課長（截止）
+      '會計_經辦',                    // 第 2 段：職能關
+      '研發部_次長', '研發部_部長',   // 第 3 段：從次長續走 → 部長（截止）
+    ]);
+  });
+
+  it('🐛 續接段的第一關就命中截止職稱 → 必須保留（不是「申請人自己」）', async () => {
+    // 第 1 段停在次長 → 續接游標＝部長；第 3 段截止職稱也是部長。
+    // 修正前：walkSegment 把「第一關即截止」一律當成主管送自己的單而不 push，
+    //         部長會無聲從鏈上消失，且沒有任何錯誤訊息。
+    getRouteConfig.mockResolvedValue(makeRouteConfig({
+      formAppId: 1001,
+      steps: [
+        { segmentType: EMP, stopAtTitleLevel: '次長' },
+        { segmentType: FIX, roleId: 'ROLE_ACC' },
+        { segmentType: EMP, stopAtTitleLevel: '部長' },
+      ],
+    }));
+
+    const { ok, chain } = await RE().buildChainForForm('emp', 1001);
+
+    expect(ok).toBe(true);
+    expect(names(chain)).toEqual([
+      '研發課_職員', '研發課_課長', '研發部_次長',
+      '會計_經辦',
+      '研發部_部長', // ← 修正前這一關會被吃掉
+    ]);
+  });
+
+  it('🐛 前一個員工鏈段已走到終點，後面又接員工鏈段 → 明確報設定錯誤（非誤報循環）', async () => {
+    // 修正前：personalCursor 是 null，被 `?? 起點` 併掉 → 回頭重走申請人的鏈
+    //         → 撞上 visited → 報「偵測到循環：ROLE_P1 重複出現」，指向完全錯的方向。
+    getRouteConfig.mockResolvedValue(makeRouteConfig({
+      formAppId: 1001,
+      steps: [
+        { segmentType: EMP },                          // 無截止職稱 → 走到 is_chain_end
+        { segmentType: EMP, stopAtTitleLevel: '部長' },
+      ],
+    }));
+
+    const { ok, error } = await RE().buildChainForForm('emp', 1001);
+
+    expect(ok).toBe(false);
+    expect(error).toContain('已走到簽核鏈終點');
+    expect(error).not.toContain('循環');
+  });
+
+  it('✅ 主管送自己的單：第一段仍適用「不簽自己」，續接段不受影響', async () => {
+    getEntryRoleId.mockResolvedValue('ROLE_P3'); // 次長本人送單
+    getRouteConfig.mockResolvedValue(makeRouteConfig({
+      formAppId: 1001,
+      steps: [
+        { segmentType: EMP, stopAtTitleLevel: '次長' },  // 起點即截止 → 本段為空
+        { segmentType: EMP, stopAtTitleLevel: '部長' },  // 續接：部長要簽
+      ],
+    }));
+
+    const { ok, chain } = await RE().buildChainForForm('emp', 1001);
+
+    expect(ok).toBe(true);
+    expect(names(chain)).toEqual(['研發部_部長']);
+  });
+
+});
+
 // ── 指定角色段的錯誤情境 ────────────────────────────────────────────────────
 
 describe('指定角色段錯誤情境', () => {

@@ -25,6 +25,8 @@
  *   2026-09-01  Jimmy/Claude  段類型切換時，一併清掉不屬於新段類型的欄位值
  *                              （員工鏈段→清 role_id / 全員會簽；指定角色段→清 stop_at / skip），
  *                              只淡化不清值 submit 會被 validateRouteSteps 擋
+ *   2026-09-01  Jimmy/Claude  validateRouteSteps 新增 step_no 檢查（混填／重複）。
+ *                              順序決定員工鏈段的接續關係，排錯等於鏈錯
  */
 (() => {
   'use strict';
@@ -290,6 +292,22 @@
     if (!rows || rows.length === 0) {
       errs.push('「路由關卡」至少要有一列。');
       return errs;
+    }
+
+    // 順序決定段的接續關係（員工鏈段會從前一段的下一關續走），排錯等於鏈錯。
+    // 引擎依 step_no 排序，且 Number('') === 0：
+    //   - 全部留空 → 排序穩定，等於畫面上的列順序，安全
+    //   - 混填     → 留空的那幾列會被當成 0 竄到最前面，與畫面順序不符
+    //   - 有重複   → 兩列誰先誰後不確定
+    // 故規則是「要嘛全空、要嘛全填且不重複」。
+    const stepNos = rows.map((r) => String(r.value?.[RSF.STEP_NO]?.value ?? '').trim());
+    const filled = stepNos.filter((s) => s !== '');
+    if (filled.length > 0 && filled.length < rows.length) {
+      errs.push('「順序」欄請全部填寫，或全部留空（留空時以畫面上的列順序為準）；混填會讓關卡順序與畫面不一致。');
+    }
+    const dupes = [...new Set(filled.filter((s, i) => filled.indexOf(s) !== i))];
+    if (dupes.length > 0) {
+      errs.push(`「順序」欄有重複值（${dupes.join('、')}），關卡先後會不確定，請改成不重複的數字。`);
     }
 
     rows.forEach((row, idx) => {

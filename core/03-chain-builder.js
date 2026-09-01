@@ -24,6 +24,9 @@
  *                              stop_at_title_level / skip_title_levels 與跨段共用 visited）；
  *                              Phase 2+3 抽為 finalizeChain。兩者都給 core/06-route-engine.js
  *                              複用，不重寫第二套（walkChainStructure 改為薄包裝，行為不變）
+ *   2026-09-01  Jimmy/Claude  walkSegment 新增 isEntrySegment：「第一關即截止職稱則不 push」
+ *                              （主管送單不用簽自己）只適用於從申請人起點開始的段。
+ *                              續接段誤用此規則會無聲吃掉一位上級簽核者
  */
 (() => {
   'use strict';
@@ -124,6 +127,10 @@
    *   遇到 title_level 命中的角色即停（含該角色）；null＝走到 is_chain_end 為止
    * @param {string[]} [p.skipTitleLevels=[]]
    *   title_level 命中者照樣沿 next_role_id 往下走，只是不 push 進結果（跳關不是斷鏈，docs/06 §3.1）
+   * @param {boolean} [p.isEntrySegment=true]
+   *   本段是否從**申請人自己的起點角色**開始。只有這種段才適用「第一關即截止職稱則不 push」
+   *   的規則（＝主管送單不用簽自己）。續接段（從前一段的 nextRoleId 往下走）的第一關
+   *   是貨真價實的上級簽核者，命中截止職稱仍要納入，否則會無聲少一個人。
    * @param {number} [p.maxDepth=MAX_DEPTH]
    * @returns {Promise<{
    *   ok: boolean,
@@ -138,6 +145,7 @@
     visited = new Set(),
     stopAtTitleLevel = null,
     skipTitleLevels = [],
+    isEntrySegment = true,
     maxDepth = MAX_DEPTH,
   }) => {
     const roleRecords = [];
@@ -161,8 +169,9 @@
 
       // 「主管送單不用簽自己」：段的第一關就命中截止職稱 → 個人段為空
       // （docs/06 §4 兩個待決點採提案傾向）
-      const isFirstOfSegment = step === 1;
-      if (!skipped && !(hitStop && isFirstOfSegment)) {
+      // ⚠️ 僅限「從申請人起點角色開始」的段。續接段的第一關是上級，命中截止職稱仍要簽。
+      const dropSelf = isEntrySegment && step === 1 && hitStop;
+      if (!skipped && !dropSelf) {
         roleRecords.push(roleRecord);
       }
 

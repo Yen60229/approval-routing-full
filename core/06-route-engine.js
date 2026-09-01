@@ -21,6 +21,11 @@
  * 【變更履歷】
  *   2026-08-31  Jimmy/Claude  初版（P8 Phase B）。docs/06 §4 兩個待決點採提案傾向：
  *                              連續兩關同一人保留兩關、個人段起點即截止職稱則個人段為空
+ *   2026-09-01  Jimmy/Claude  修段接續兩個 bug：
+ *                              ① 續接的員工鏈段傳 isEntrySegment:false，第一關命中截止職稱
+ *                                 不再被當成「申請人自己」丟掉
+ *                              ② personalCursor 區分 undefined／null，前段已到終點時明確報錯，
+ *                                 不再退回起點重走而誤報「偵測到循環」
  */
 (() => {
   'use strict';
@@ -91,7 +96,13 @@
       const visited = new Set();                 // 跨段共用，偵測跨段循環
       const steps = [];                          // { role, signingModeOverride }
       let entryRoleId;                           // undefined = 尚未查詢（惰性）
-      let personalCursor = null;                 // 上一個員工鏈段結束後的「下一關」
+      // 員工鏈段的續接游標，三種狀態要分得清楚：
+      //   undefined = 還沒有任何員工鏈段 → 下一個員工鏈段從申請人起點開始
+      //   string    = 前一段結束後的「下一關」→ 續接
+      //   null      = 前一段已走到簽核鏈終點 → 後面不該再有員工鏈段（設定錯誤）
+      // 用 `?? 起點` 併掉 null 會讓它默默回頭重走申請人的鏈，撞上 visited 後
+      // 報成「偵測到循環」，維護者會往完全錯的方向查。
+      let personalCursor;
 
       const resolveEntry = async () => {
         if (entryRoleId === undefined) entryRoleId = await getEntryRoleId(employeeCode);
@@ -111,7 +122,17 @@
             return { ok: false, chain: [], error: `${stepLabel}（員工鏈段）不可指定「全員會簽」，該模式僅限指定角色段` };
           }
 
-          const start = personalCursor ?? (await resolveEntry());
+          const isEntrySegment = personalCursor === undefined;
+
+          if (!isEntrySegment && personalCursor === null) {
+            return {
+              ok: false, chain: [],
+              error: `${stepLabel}（員工鏈段）：前面的員工鏈段已走到簽核鏈終點，後面不能再接員工鏈段。` +
+                     `請改用指定角色段，或調整前一段的「簽到職稱為止」。`,
+            };
+          }
+
+          const start = isEntrySegment ? await resolveEntry() : personalCursor;
           if (!start) {
             return { ok: false, chain: [], error: `員工 ${employeeCode} 未設定起點角色` };
           }
@@ -119,7 +140,11 @@
           const stopAt = cell(row, RSF.STOP_AT_TITLE_LEVEL) || null;
           const skip = cell(row, RSF.SKIP_TITLE_LEVELS, []) || [];
 
-          const seg = await walkSegment({ startRoleId: start, visited, stopAtTitleLevel: stopAt, skipTitleLevels: skip });
+          const seg = await walkSegment({
+            startRoleId: start, visited,
+            stopAtTitleLevel: stopAt, skipTitleLevels: skip,
+            isEntrySegment,
+          });
           if (!seg.ok) {
             return { ok: false, chain: [], error: `${stepLabel}：${seg.error}` };
           }

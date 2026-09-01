@@ -6,10 +6,24 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P8 Phase B — 程式碼完成，待 kintone 端驗證**
+- **當前 Phase**:**P8 Phase B — 程式碼完成，待 kintone 端驗證；下一步 Phase C 產生器**
 - **最後更新**:2026-09-01
-- **git**:全部已 commit + push，工作區乾淨。最新 `f1f2e12 feat(P8): Phase B 路由引擎 + 表單路由設定表 UI`
-- **測試**:`npm test` → **149 項全過**（6 檔）
+- **git**:全部已 commit + push，工作區乾淨
+- **測試**:`npm test` → **158 項全過**（6 檔）
+
+### 2026-09-01 全盤分析 + 段接續修正
+
+Phase C／D 動工前先做了一輪全盤體檢（15,175 行），掃出**員工鏈段續接**的兩個真 bug，
+已修 + 補測試（詳見 `docs/對話脈絡.md` §9.11）：
+
+- **① 續段第一關被無聲吃掉** — `walkSegment` 的「主管送單不用簽自己」規則誤套用於續接段。
+  新增 `isEntrySegment` 參數，只有第一個員工鏈段傳 true
+- **② 續段接在終點後誤報「偵測到循環」** — `personalCursor ?? 起點` 併掉 null 導致退回起點重走。
+  改為三態（`undefined`／`string`／`null`），前段已到終點時明確報設定錯誤
+- **順帶**：`validateRouteSteps` 補 `step_no` 混填／重複檢查（順序決定接續關係）
+
+兩個 bug 都只在「員工鏈段 → 指定角色段 → 員工鏈段」的路由才會發生，原本 20 個
+route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前確實會紅。
 
 ### 換機接手指南（2026-09-01）
 
@@ -410,4 +424,5 @@
 | **P8 Phase A** | **2026-08-31** | 引擎前置修復 4 項（docs/05 #1#2#3#4）完成，91 項測試全過 |
 | **P8 Phase B a/b/c** | **2026-08-31** | ROUTE 欄位代碼、`getRouteConfig` 全量快取、`core/06-route-engine.js` `buildChainForForm`；`walkSegment`/`finalizeChain` 由 03 抽出共用；120 項測試全過。剩 d（表單 UI）卡 App 736 掛載 |
 | **P8 執行者機制定案** | **2026-08-31** | 基石假設否決：proceed 直寫欄位不穩（已知行為），執行者改用「更新執行者 API」`PUT /k/v1/record/assignees` 為權威 + `detail.show` 安全網；docs/06 升 1.2、docs/02 與對話脈絡 §9.8 同步 |
+| **P8 段接續修正** | **2026-09-01** | 全盤分析掃出兩個真 bug：續段第一關被「主管送單不用簽自己」規則誤吃（`walkSegment` 補 `isEntrySegment`）、續段接在終點後誤報循環（`personalCursor` 改三態）；順帶補 `step_no` 混填／重複驗證。158 項測試全過 |
 | **P8 Phase B 收尾** | **2026-09-01** | App 736 建好＋schema 驗證、App ID 回填 736；`core/07-role-picker.js` 抽共用（方案 A）＋`03` 改用；`apps/form-route/01-route-form.js`（子表格逐列 DOM 淡化＋RolePicker＋`validateRouteSteps`）。149 項測試全過。剩：736／685 手動回歸、更新執行者 API 實測 |

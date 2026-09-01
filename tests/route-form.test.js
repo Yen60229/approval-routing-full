@@ -12,8 +12,9 @@ const { validateRouteSteps } = window.ApprovalRouting.RouteFormInternals;
 const EMP = '員工鏈段';
 const FIX = '指定角色段';
 
-const row = ({ seg = '', roleId = '', stopAt = '', skip = [], mode = '' } = {}) => ({
+const row = ({ seg = '', roleId = '', stopAt = '', skip = [], mode = '', stepNo = '' } = {}) => ({
   value: {
+    step_no:             { value: stepNo },
     segment_type:        { value: seg },
     role_id:             { value: roleId },
     stop_at_title_level: { value: stopAt },
@@ -93,6 +94,45 @@ describe('validateRouteSteps', () => {
     expect(e).toHaveLength(2);
     expect(e[0]).toContain('第 2 列');
     expect(e[1]).toContain('第 3 列');
+  });
+
+  // ── step_no：順序決定段的接續關係，排錯等於鏈錯 ───────────────────────────
+
+  it('✅ step_no 全部留空 → 合法（以畫面列順序為準）', () => {
+    expect(validateRouteSteps([row({ seg: EMP }), row({ seg: FIX, roleId: 'ROLE_ACC' })], KNOWN)).toEqual([]);
+  });
+
+  it('✅ step_no 全部填好且不重複 → 合法', () => {
+    expect(validateRouteSteps([
+      row({ stepNo: '1', seg: EMP }),
+      row({ stepNo: '2', seg: FIX, roleId: 'ROLE_ACC' }),
+    ], KNOWN)).toEqual([]);
+  });
+
+  it('✅ step_no 混填（有的填有的空）→ 錯：留空的會被當 0 竄到最前面', () => {
+    const e = validateRouteSteps([
+      row({ stepNo: '1', seg: EMP }),
+      row({ seg: FIX, roleId: 'ROLE_ACC' }),
+    ], KNOWN);
+    expect(e).toHaveLength(1);
+    expect(e[0]).toContain('請全部填寫，或全部留空');
+  });
+
+  it('✅ step_no 重複 → 錯：關卡先後不確定', () => {
+    const e = validateRouteSteps([
+      row({ stepNo: '2', seg: EMP }),
+      row({ stepNo: '2', seg: FIX, roleId: 'ROLE_ACC' }),
+    ], KNOWN);
+    expect(e).toHaveLength(1);
+    expect(e[0]).toContain('有重複值（2）');
+  });
+
+  it('✅ step_no 不必連號，只要不重複（1、5、9 合法）', () => {
+    expect(validateRouteSteps([
+      row({ stepNo: '1', seg: EMP }),
+      row({ stepNo: '5', seg: FIX, roleId: 'ROLE_ACC' }),
+      row({ stepNo: '9', seg: FIX, roleId: 'ROLE_GA' }),
+    ], KNOWN)).toEqual([]);
   });
 
 });
