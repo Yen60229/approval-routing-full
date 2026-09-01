@@ -41,8 +41,9 @@
  *      遷移過來」時會踩到——舊的「簽核中(n)」狀態上若還有在途單，部署會失敗。
  *   5. 目標狀態上有「已指定執行者的記錄」時，該狀態的執行者指定方式無法變更
  *      （GAIA_IL35）。有在途單時重新部署可能失敗，UI 會事先警告。
- *   6. **index 0 的初始狀態，`assignee.type` 只能是 `ONE`**（2026-09-01 實測，官方文件未載明）。
- *      填 ANY 會被拒：「初始狀態下，執行者的type只能指定為『ONE』。」
+ *   6. **index 0 的初始狀態有兩條限制**（2026-09-01 實測，官方文件未載明）：
+ *      `assignee.type` 只能是 `ONE`（填 ANY 被拒），且執行者**需為空、或指定為記錄的
+ *      建立人欄位**——`CREATOR` 這個 entity type 在初始狀態不被接受。本檔採留空。
  *   7. **`SECONDARY` 動作的 `executableUser` 是必填**（同上實測）。沒有可執行群組時
  *      不能只是省略它，會回「此項必填。」——本檔改為直接不產生該動作。
  *
@@ -111,10 +112,14 @@
     // ── 狀態 ────────────────────────────────────────────────────────────
     const assigneeOf = (name) => {
       if (name === ST.DRAFT) {
-        // ⚠️ kintone 平台規則（2026-09-01 實測）：**index 0 的初始狀態，type 只能是 ONE**。
-        //    填 ANY 會被拒：「初始狀態下，執行者的type只能指定為『ONE』。」
-        //    只有一個候選人（建立者），所以 ONE 與 ANY 的實際行為相同。
-        return { type: 'ONE', entities: [entityOf('CREATOR')] };
+        // ⚠️ kintone 平台規則（2026-09-01 實測，官方文件未載明）——初始狀態有兩條限制：
+        //    ① type 只能是 ONE（填 ANY 被拒：「初始狀態下，執行者的type只能指定為『ONE』。」）
+        //    ② 執行者「需為空、或指定為記錄的建立人欄位」——`CREATOR` 這個 entity type
+        //       在初始狀態不被接受。
+        //    採**留空**：這也是 kintone 預設範本的做法。留空代表「看得到這筆記錄的人
+        //    都能按送出」，而草稿的可見範圍本來就該由記錄權限限縮到申請人本人，
+        //    所以實際效果與指定建立人相同，卻不必寫死語言相依的內建欄位代碼。
+        return { type: 'ONE', entities: [] };
       }
       if (name === ST.REJECTED) {
         // 申請人自己：駁回後要能再申請
@@ -212,10 +217,17 @@
       if (v !== i) errs.push(`狀態的 index 不連續或重複（預期 ${i}，實得 ${v}）。`);
     });
 
-    // kintone 平台規則：index 0 的初始狀態，執行者 type 只能是 ONE
+    // kintone 平台規則：index 0 的初始狀態，type 只能是 ONE，且執行者需為空
+    // （或指定為記錄的建立人欄位——CREATOR 這個 entity type 不被接受）
     const first = Object.values(states).find((s) => String(s.index) === '0');
-    if (first && first.assignee?.type !== 'ONE') {
-      errs.push(`初始狀態「${first.name}」的執行者 type 只能是 ONE（實得 ${first.assignee?.type}）。`);
+    if (first) {
+      if (first.assignee?.type !== 'ONE') {
+        errs.push(`初始狀態「${first.name}」的執行者 type 只能是 ONE（實得 ${first.assignee?.type}）。`);
+      }
+      const ents = first.assignee?.entities ?? [];
+      if (ents.length > 0 && ents.some((e) => e.entity?.type !== 'FIELD_ENTITY')) {
+        errs.push(`初始狀態「${first.name}」的執行者需為空、或指定為記錄的建立人欄位（不接受 CREATOR）。`);
+      }
     }
 
     // kintone 平台規則：SECONDARY 動作的 executableUser 必填

@@ -54,11 +54,14 @@ describe('buildStatusJson — 狀態', () => {
     }
   });
 
-  it('🔑 初始狀態（index 0）的 type 必須是 ONE — kintone 平台規則', () => {
-    // 實測：填 ANY 會被拒「初始狀態下，執行者的type只能指定為『ONE』。」
+  it('🔑 初始狀態（index 0）：type 必須 ONE、執行者必須留空 — kintone 平台規則', () => {
+    // 實測打出來的兩條：
+    //   ①「初始狀態下，執行者的type只能指定為『ONE』。」
+    //   ②「初始狀態下，執行者需為空、或指定為記錄的建立人欄位。」← CREATOR 不被接受
     const p = build();
     expect(p.states[DRAFT].index).toBe('0');
     expect(p.states[DRAFT].assignee.type).toBe('ONE');
+    expect(p.states[DRAFT].assignee.entities).toEqual([]);
   });
 
   it('🔑 任一人簽用 ANY（ONE 是「指定一人」，名字騙人）；會簽中才是 ALL', () => {
@@ -68,15 +71,14 @@ describe('buildStatusJson — 狀態', () => {
     expect(p.states[COSIGNING].assignee.type).toBe('ALL');
   });
 
-  it('✅ 終態不設執行者；草稿與駁回掛 CREATOR（申請人要能送出／再申請）', () => {
+  it('✅ 終態不設執行者；駁回掛 CREATOR（申請人要能再申請）', () => {
     const p = build();
     expect(p.states[DECIDED].assignee.entities).toEqual([]);
     expect(p.states[CANCELLED].assignee.entities).toEqual([]);
-    for (const name of [DRAFT, REJECTED]) {
-      expect(p.states[name].assignee.entities).toEqual([
-        { entity: { type: 'CREATOR' }, includeSubs: false },
-      ]);
-    }
+    // 駁回不是初始狀態，CREATOR 可用（實測驗證通過，未被 kintone 挑錯）
+    expect(p.states[REJECTED].assignee.entities).toEqual([
+      { entity: { type: 'CREATOR' }, includeSubs: false },
+    ]);
   });
 
 });
@@ -220,6 +222,12 @@ describe('validateStatusPayload', () => {
     const p = build();
     p.states[DRAFT].assignee.type = 'ANY';
     expect(validateStatusPayload(p).join()).toContain('只能是 ONE');
+  });
+
+  it('🔑 初始狀態掛 CREATOR → 錯（kintone 只接受留空或建立人欄位）', () => {
+    const p = build();
+    p.states[DRAFT].assignee.entities = [{ entity: { type: 'CREATOR' }, includeSubs: false }];
+    expect(validateStatusPayload(p).join()).toContain('建立人欄位');
   });
 
   it('🔑 SECONDARY 動作沒帶 executableUser → 錯', () => {
