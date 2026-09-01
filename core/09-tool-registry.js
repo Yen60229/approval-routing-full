@@ -141,22 +141,25 @@
         `font-size:15px; padding:9px 18px; background:${group.color}; color:#fff; ` +
         'border:none; border-radius:6px; cursor:pointer;';
 
+      // 深底白字：35-55 歲使用者反映純白底黑字對比不夠舒適。
+      // width 不設死值，讓面板依最長的那行文字自動撐開，字一律不換行（white-space:nowrap）——
+      // 換行會讓「說明」那行斷成兩截，年長使用者要多看一眼才會意。
       const panel = document.createElement('div');
       panel.style.cssText =
-        'position:absolute; top:calc(100% + 6px); left:0; min-width:300px; background:#fff; ' +
-        'border:1px solid #ddd; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.18); ' +
-        'z-index:1000; display:none; overflow:hidden;';
+        'position:absolute; top:calc(100% + 6px); left:0; width:auto; white-space:nowrap; ' +
+        'background:#2d2d2d; border:1px solid #454545; border-radius:8px; ' +
+        'box-shadow:0 8px 28px rgba(0,0,0,.35); z-index:1000; display:none; overflow:hidden;';
 
       panel.innerHTML = group.tools.map((t, i) => `
         <div data-idx="${i}" role="button" tabindex="0"
-             style="padding:11px 14px; cursor:pointer; ${i ? 'border-top:1px solid #f0f0f0;' : ''}">
-          <div style="font-size:15px; font-weight:600;">${esc(t.label)}</div>
-          ${t.hint ? `<div style="font-size:12px; color:#777; margin-top:2px;">${esc(t.hint)}</div>` : ''}
+             style="padding:13px 20px; cursor:pointer; ${i ? 'border-top:1px solid rgba(255,255,255,.1);' : ''}">
+          <div style="font-size:17px; font-weight:700; color:#fff;">${esc(t.label)}</div>
+          ${t.hint ? `<div style="font-size:14px; color:#c9c9c9; margin-top:3px;">${esc(t.hint)}</div>` : ''}
         </div>`).join('');
 
       panel.addEventListener('mouseover', (e) => {
         const row = e.target.closest('[data-idx]');
-        if (row) row.style.background = '#f5f3ff';
+        if (row) row.style.background = group.color;
       });
       panel.addEventListener('mouseout', (e) => {
         const row = e.target.closest('[data-idx]');
