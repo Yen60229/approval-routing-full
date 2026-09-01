@@ -103,7 +103,7 @@
 
         // kintone 單次最多 500 筆，超過 80 筆用 while 保險
         while (true) {
-          const resp = await api('/k/v1/records', 'GET', {
+          const resp = await api('/k/v1/records.json', 'GET', {
             app: APP_ID.ROLE_DEFINITION,
             query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${limit} offset ${offset}`,
           });
@@ -207,7 +207,7 @@
       return cached.value;
     }
 
-    const resp = await api('/k/v1/records', 'GET', {
+    const resp = await api('/k/v1/records.json', 'GET', {
       app: APP_ID.EMPLOYEE_ENTRY,
       query: `${EF.EMPLOYEE} in ("${employeeCode}") and ${EF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 1`,
       fields: [EF.ENTRY_ROLE_ID],
@@ -254,7 +254,7 @@
         const limit = 500;
 
         while (true) {
-          const resp = await api('/k/v1/records', 'GET', {
+          const resp = await api('/k/v1/records.json', 'GET', {
             app: APP_ID.FORM_ROUTE_CONFIG,
             query: `${RCF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${limit} offset ${offset}`,
           });
@@ -305,7 +305,7 @@
    */
   const getGroupMembers = async (groupCode) => {
     const members = await kintone.api(
-      kintone.api.url('/k/v1/group/users', true),
+      kintone.api.url('/k/v1/group/users.json', true),
       'GET',
       { code: groupCode }
     );

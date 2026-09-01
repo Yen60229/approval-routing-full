@@ -371,7 +371,7 @@
    */
   const updateAssigneesWithRetry = async (appId, recordId, assignees, revision) => {
     const call = (rev) =>
-      kintoneApi('/k/v1/record/assignees', 'PUT', {
+      kintoneApi('/k/v1/record/assignees.json', 'PUT', {
         app: appId, id: recordId, assignees,
         ...(rev ? { revision: rev } : {}),
       });
@@ -381,7 +381,7 @@
       return { ok: true, error: null };
     } catch (err) {
       try {
-        const fresh = await kintoneApi('/k/v1/record', 'GET', { app: appId, id: recordId });
+        const fresh = await kintoneApi('/k/v1/record.json', 'GET', { app: appId, id: recordId });
         await call(fresh.record?.$revision?.value);
         return { ok: true, error: null };
       } catch (err2) {
@@ -451,7 +451,7 @@
 
       // 欄位鏡像同步（顯示用 + 原生流程的 fallback 來源 + filterCond 的依據）
       try {
-        await kintoneApi('/k/v1/record', 'PUT', {
+        await kintoneApi('/k/v1/record.json', 'PUT', {
           app: appId, id: recordId,
           record: {
             [AF.CURRENT_APPROVERS]: { value: toUserValue(resolved.holders) },

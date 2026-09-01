@@ -98,7 +98,7 @@
     const all = [];
     let offset = 0;
     for (;;) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app,
         fields,
         query: `order by $id asc limit ${CONFIG.RECORD_PAGE} offset ${offset}`,
@@ -221,7 +221,7 @@
 
   const putRecords = async (app, updates) => {
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app, records: part });
     }
   };
 

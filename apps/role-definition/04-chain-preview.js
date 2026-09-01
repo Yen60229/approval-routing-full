@@ -65,7 +65,7 @@
 
     // kintone 每頁上限 500，用 offset 翻頁直到取完全部
     for (;;) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app: APP_ID.ROLE_DEFINITION,
         fields: [F.ROLE_ID, F.ROLE_NAME, F.NEXT_ROLE_ID, F.IS_CHAIN_END, F.HOLDER_TYPE, F.HOLDER_USER, F.HOLDER_GROUP],
         query: `${F.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${LIMIT} offset ${offset}`,

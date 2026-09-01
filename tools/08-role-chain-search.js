@@ -54,7 +54,7 @@
     const map = new Map();
     let offset = 0;
     for (;;) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app: APP_ID.ROLE_DEFINITION,
         fields: ['$id', RF.ROLE_ID],
         query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${CONFIG.RECORD_PAGE} offset ${offset}`,

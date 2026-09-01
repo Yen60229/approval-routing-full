@@ -80,7 +80,7 @@
 
   /**
    * kintone REST API 呼叫封裝（簡易版，P4 會有完整 api-client）
-   * @param {string} path - API 路徑，如 '/k/v1/records'
+   * @param {string} path - API 路徑，如 '/k/v1/records.json'
    * @param {string} method - GET / POST / PUT / DELETE
    * @param {Object} body - 請求參數
    * @returns {Promise<Object>}

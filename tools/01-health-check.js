@@ -124,7 +124,7 @@
     // --- Pass 3：孤立角色（沒有任何角色指向它）---
     // 同時查員工起點對照表，排除「是員工起點」的角色
     const entryResp = await kintone.api(
-      kintone.api.url('/k/v1/records', true), 'GET', {
+      kintone.api.url('/k/v1/records.json', true), 'GET', {
         app: APP_ID.EMPLOYEE_ENTRY,
         fields: [EF.ENTRY_ROLE_ID],
         query: `${EF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,

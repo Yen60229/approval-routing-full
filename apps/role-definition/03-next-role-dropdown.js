@@ -49,7 +49,7 @@
    *          nameById：所有啟用角色（去重前）的 role_id → role_name 對照，供初始值顯示用
    */
   const fetchActiveRoles = async (excludeRoleId) => {
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
+    const resp = await kintoneApi('/k/v1/records.json', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
       fields: [F.ROLE_ID, F.ROLE_NAME, F.UNIT_NAME],
       query:

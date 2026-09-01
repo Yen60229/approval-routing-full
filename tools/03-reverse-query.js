@@ -124,7 +124,7 @@
 
     // Step 2：掃描員工起點，找出哪些員工的鏈會走到這些角色
     const entryResp = await kintone.api(
-      kintone.api.url('/k/v1/records', true), 'GET', {
+      kintone.api.url('/k/v1/records.json', true), 'GET', {
         app: APP_ID.EMPLOYEE_ENTRY,
         fields: [EF.EMPLOYEE, EF.ENTRY_ROLE_ID],
         query: `${EF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,

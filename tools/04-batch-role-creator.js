@@ -826,7 +826,7 @@
     let offset = 0;
 
     while (true) {
-      const resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', {
+      const resp = await kintone.api(kintone.api.url('/k/v1/records.json', true), 'GET', {
         app: appId,
         fields: ['$id', 'role_id', 'role_name', 'unit_name', 'title_level',
                  'holder_type', 'holder_user', 'signing_mode', 'is_active'],
@@ -1975,7 +1975,7 @@
     };
     let resp;
     try {
-      resp = await kintone.api(kintone.api.url('/k/v1/records', true), 'GET', params);
+      resp = await kintone.api(kintone.api.url('/k/v1/records.json', true), 'GET', params);
     } catch (error) {
       console.error('[batch-role-creator] fetchMaxRoleNum records API error', { params, error });
       throw new Error(`讀取既有 role_id 失敗：${formatKintoneError(error)}。已改用與 01-role-form-init.js 相同的查詢格式，若仍失敗，請檢查 App 685 是否有「未套用表單變更」或 role_id 是否可用於排序。`);
@@ -2244,7 +2244,7 @@
         throw new Error('kintone.app.getId() 回傳 null。請確認此 JS 已上傳至 App 685 的「自訂設定」，而非其他 App。');
       }
 
-      const apiUrl = kintone.api.url('/k/v1/records', true);
+      const apiUrl = kintone.api.url('/k/v1/records.json', true);
 
       // POST 新列
       if (newRows.length) {
@@ -2374,7 +2374,7 @@
       showStatus(statusId, 'info', `建立中... ${created} / ${records.length}`);
 
       try {
-        await kintone.api(kintone.api.url('/k/v1/records', true), 'POST', {
+        await kintone.api(kintone.api.url('/k/v1/records.json', true), 'POST', {
           app: appId,
           records: chunk,
         });
@@ -2384,7 +2384,7 @@
         console.warn('[submitBatch] chunk failed, retrying one by one:', formatKintoneError(chunkErr));
         for (const rec of chunk) {
           try {
-            await kintone.api(kintone.api.url('/k/v1/records', true), 'POST', {
+            await kintone.api(kintone.api.url('/k/v1/records.json', true), 'POST', {
               app: appId,
               records: [rec],
             });
@@ -2403,7 +2403,7 @@
       showStatus(statusId, 'info', `更新既有記錄中... ${updated} / ${updates.length}`);
 
       try {
-        await kintone.api(kintone.api.url('/k/v1/records', true), 'PUT', {
+        await kintone.api(kintone.api.url('/k/v1/records.json', true), 'PUT', {
           app: appId,
           records: chunk,
         });
@@ -2412,7 +2412,7 @@
         console.warn('[submitBatch] update chunk failed, retrying one by one:', formatKintoneError(chunkErr));
         for (const item of chunk) {
           try {
-            await kintone.api(kintone.api.url('/k/v1/records', true), 'PUT', {
+            await kintone.api(kintone.api.url('/k/v1/records.json', true), 'PUT', {
               app: appId,
               records: [item],
             });

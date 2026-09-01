@@ -42,7 +42,7 @@
     let max = 0;
 
     for (;;) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app: APP_ID.ROLE_DEFINITION,
         fields: [F.ROLE_ID],
         query: `order by $id asc limit ${LIMIT} offset ${offset}`,

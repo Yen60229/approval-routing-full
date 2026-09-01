@@ -106,7 +106,7 @@
     const results = await Promise.all(
       chunk(codes, 50).map((part) => {
         const list = part.map((c) => `"${c}"`).join(', ');
-        return kintoneApi('/k/v1/records', 'GET', {
+        return kintoneApi('/k/v1/records.json', 'GET', {
           app: APP_ID.EMPLOYEE_ENTRY,
           fields: [F.EMPLOYEE],
           query: `${F.EMPLOYEE} in (${list}) limit 500`,
@@ -134,7 +134,7 @@
     const valid = [];
 
     // 啟用角色的 名稱 → role_id 對照（同名取第一筆為代表）
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
+    const resp = await kintoneApi('/k/v1/records.json', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
       fields: [RF.ROLE_ID, RF.ROLE_NAME],
       query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit 500`,
@@ -225,7 +225,7 @@
         [F.IS_ACTIVE]: { value: [CHECKBOX.ACTIVE] },
       }));
 
-      await kintoneApi('/k/v1/records', 'POST', {
+      await kintoneApi('/k/v1/records.json', 'POST', {
         app: APP_ID.EMPLOYEE_ENTRY,
         records,
       });

@@ -86,7 +86,7 @@
     const all = [];
     let offset = 0;
     while (true) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app: APP_ID.ROLE_DEFINITION,
         fields,
         query: `${condition} limit ${CONFIG.RECORD_PAGE} offset ${offset}`,
@@ -150,7 +150,7 @@
     // ② 686 啟用中的起點記錄
     let offset = 0;
     while (true) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app: APP_ID.EMPLOYEE_ENTRY,
         fields: [EF.ENTRY_ROLE_ID],
         query: `${EF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${CONFIG.RECORD_PAGE} offset ${offset}`,
@@ -265,7 +265,7 @@
 
   /** 產生 role_id 流水號的起點：現有最大的 ROLE_NNNN 再加 1 */
   const nextRoleSeq = async () => {
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
+    const resp = await kintoneApi('/k/v1/records.json', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
       fields: [RF.ROLE_ID],
       query: `order by ${RF.ROLE_ID} desc limit ${CONFIG.RECORD_PAGE}`,
@@ -312,10 +312,10 @@
 
     // 先新增再縮減：中途失敗時人還在原記錄上，不會有人不見
     for (const part of chunk(creates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'POST', { app: APP_ID.ROLE_DEFINITION, records: part });
+      await kintoneApi('/k/v1/records.json', 'POST', { app: APP_ID.ROLE_DEFINITION, records: part });
     }
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
     }
     return creates.length;
   };
@@ -323,7 +323,7 @@
   /** ② 永久刪除記錄（kintone 沒有還原桶，刪掉就沒了） */
   const deleteRecords = async (ids) => {
     for (const part of chunk(ids, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'DELETE', { app: APP_ID.ROLE_DEFINITION, ids: part });
+      await kintoneApi('/k/v1/records.json', 'DELETE', { app: APP_ID.ROLE_DEFINITION, ids: part });
     }
   };
 
@@ -331,7 +331,7 @@
   const deactivateRecords = async (ids) => {
     const updates = ids.map((id) => ({ id, record: { [RF.IS_ACTIVE]: { value: [] } } }));
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
     }
   };
 

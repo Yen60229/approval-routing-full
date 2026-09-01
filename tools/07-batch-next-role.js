@@ -58,7 +58,7 @@
     const all = [];
     let offset = 0;
     while (true) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app: APP_ID.ROLE_DEFINITION,
         fields: ['$id', RF.ROLE_ID, RF.ROLE_NAME, RF.UNIT_NAME, RF.NEXT_ROLE_ID, RF.IS_CHAIN_END],
         query: `${RF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${CONFIG.RECORD_PAGE} offset ${offset}`,
@@ -158,7 +158,7 @@
       return { id: r.recordId, record };
     });
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
     }
     return updates.length;
   };

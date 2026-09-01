@@ -325,11 +325,11 @@
   // 部署管線
   // -------------------------------------------------------------------
 
-  const getLiveStatus = (appId) => kintoneApi('/k/v1/app/status', 'GET', { app: appId });
-  const putPreviewStatus = (body) => kintoneApi('/k/v1/preview/app/status', 'PUT', body);
+  const getLiveStatus = (appId) => kintoneApi('/k/v1/app/status.json', 'GET', { app: appId });
+  const putPreviewStatus = (body) => kintoneApi('/k/v1/preview/app/status.json', 'PUT', body);
   const postDeploy = (appId, revision) =>
-    kintoneApi('/k/v1/preview/app/deploy', 'POST', { apps: [{ app: appId, revision }] });
-  const getDeployStatus = (appId) => kintoneApi('/k/v1/preview/app/deploy', 'GET', { apps: [appId] });
+    kintoneApi('/k/v1/preview/app/deploy.json', 'POST', { apps: [{ app: appId, revision }] });
+  const getDeployStatus = (appId) => kintoneApi('/k/v1/preview/app/deploy.json', 'GET', { apps: [appId] });
 
   /** 輪詢部署狀態直到結束。卡在 PROCESSING 時不要重複 POST，等就好 */
   const waitForDeploy = async (appId, { tries = 30, intervalMs = 2000 } = {}) => {
@@ -492,7 +492,7 @@
 
     // ⑦ 回寫指紋
     try {
-      await kintoneApi('/k/v1/record', 'PUT', {
+      await kintoneApi('/k/v1/record.json', 'PUT', {
         app: kintone.app.getId(),
         id: routeConfig.$id.value,
         record: {
@@ -515,7 +515,7 @@
   // -------------------------------------------------------------------
 
   const fetchAllRouteConfigs = async () => {
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
+    const resp = await kintoneApi('/k/v1/records.json', 'GET', {
       app: kintone.app.getId(),
       query: `order by ${RTF.FORM_APP_ID} asc limit 500`,
     });

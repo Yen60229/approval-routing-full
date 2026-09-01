@@ -252,8 +252,8 @@
   const checkTitleLevelSync = async () => {
     try {
       const [f736, f685] = await Promise.all([
-        kintoneApi('/k/v1/app/form/fields', 'GET', { app: kintone.app.getId() }),
-        kintoneApi('/k/v1/app/form/fields', 'GET', { app: APP_ID.ROLE_DEFINITION }),
+        kintoneApi('/k/v1/app/form/fields.json', 'GET', { app: kintone.app.getId() }),
+        kintoneApi('/k/v1/app/form/fields.json', 'GET', { app: APP_ID.ROLE_DEFINITION }),
       ]);
 
       const stepFields = f736.properties[RTF.ROUTE_STEPS].fields;

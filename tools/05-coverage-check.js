@@ -492,7 +492,7 @@
     const all = [];
     let offset = 0;
     while (true) {
-      const resp = await kintoneApi('/k/v1/records', 'GET', {
+      const resp = await kintoneApi('/k/v1/records.json', 'GET', {
         app,
         fields,
         query: `${condition} limit ${CONFIG.RECORD_PAGE} offset ${offset}`,
@@ -621,7 +621,7 @@
    */
   const fetchRoleFormFields = async () => {
     try {
-      const resp = await kintoneApi('/k/v1/app/form/fields', 'GET',
+      const resp = await kintoneApi('/k/v1/app/form/fields.json', 'GET',
         { app: APP_ID.ROLE_DEFINITION });
       const props = resp.properties || {};
       const optionsOf = (code) => Object.values(props[code]?.options || {})
@@ -888,10 +888,10 @@
     const { creates, updates } = planEntryWrites(pairs);
 
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
     }
     for (const part of chunk(creates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'POST', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
+      await kintoneApi('/k/v1/records.json', 'POST', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
     }
     return { created: creates.length, updated: updates.length };
   };
@@ -921,7 +921,7 @@
 
   /** 產生 role_id 流水號的起點：現有最大的 ROLE_NNNN 再加 1 */
   const nextRoleSeq = async () => {
-    const resp = await kintoneApi('/k/v1/records', 'GET', {
+    const resp = await kintoneApi('/k/v1/records.json', 'GET', {
       app: APP_ID.ROLE_DEFINITION,
       fields: [RF.ROLE_ID],
       query: `order by ${RF.ROLE_ID} desc limit ${CONFIG.RECORD_PAGE}`,
@@ -963,7 +963,7 @@
     }));
 
     for (const part of chunk(records, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'POST', {
+      await kintoneApi('/k/v1/records.json', 'POST', {
         app: APP_ID.ROLE_DEFINITION,
         records: part,
       });
@@ -978,7 +978,7 @@
       record: { [EF.IS_ACTIVE]: { value: [] } },
     }));
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
     }
   };
 
@@ -1018,7 +1018,7 @@
   /** 分批送出 685 的記錄更新（PUT 單次上限 100 筆） */
   const updateRoleRecords = async (updates) => {
     for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
+      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.ROLE_DEFINITION, records: part });
     }
     return updates.length;
   };
@@ -1046,7 +1046,7 @@
       const { records, roleIdByRow } =
         buildNewRoleRecords(newRoles, await nextRoleSeq(), { roleNameSeparator });
       for (const part of chunk(records, CONFIG.WRITE_BATCH)) {
-        await kintoneApi('/k/v1/records', 'POST',
+        await kintoneApi('/k/v1/records.json', 'POST',
           { app: APP_ID.ROLE_DEFINITION, records: part });
       }
       rolesCreated = records.length;
