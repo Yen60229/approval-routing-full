@@ -41,11 +41,18 @@
  *      遷移過來」時會踩到——舊的「簽核中(n)」狀態上若還有在途單，部署會失敗。
  *   5. 目標狀態上有「已指定執行者的記錄」時，該狀態的執行者指定方式無法變更
  *      （GAIA_IL35）。有在途單時重新部署可能失敗，UI 會事先警告。
+ *   6. **index 0 的初始狀態，`assignee.type` 只能是 `ONE`**（2026-09-01 實測，官方文件未載明）。
+ *      填 ANY 會被拒：「初始狀態下，執行者的type只能指定為『ONE』。」
+ *   7. **`SECONDARY` 動作的 `executableUser` 是必填**（同上實測）。沒有可執行群組時
+ *      不能只是省略它，會回「此項必填。」——本檔改為直接不產生該動作。
  *
  * 【變更履歷】
  *   2026-09-01  Jimmy/Claude  初版（P8 Phase C，簽核中(1..K) 編號模型）
  *   2026-09-01  Jimmy/Claude  改為固定 7 狀態常數模板（Jimmy 確認 kintone 允許自迴圈）：
  *                              刪掉 K 值計算、只增不減、全員會簽位置判定三段邏輯
+ *   2026-09-01  Jimmy/Claude  實測 PUT 打出兩條官方文件未載明的平台規則（見上方 6、7）：
+ *                              初始狀態 type 固定 ONE、SECONDARY 必須帶 executableUser。
+ *                              兩者都補進 validateStatusPayload，PUT 前就擋下
  */
 (() => {
   'use strict';
@@ -103,8 +110,14 @@
   const buildStatusJson = ({ cancelGroups = [] } = {}) => {
     // ── 狀態 ────────────────────────────────────────────────────────────
     const assigneeOf = (name) => {
-      if (name === ST.DRAFT || name === ST.REJECTED) {
-        // 申請人自己：草稿要能送出、駁回要能再申請
+      if (name === ST.DRAFT) {
+        // ⚠️ kintone 平台規則（2026-09-01 實測）：**index 0 的初始狀態，type 只能是 ONE**。
+        //    填 ANY 會被拒：「初始狀態下，執行者的type只能指定為『ONE』。」
+        //    只有一個候選人（建立者），所以 ONE 與 ANY 的實際行為相同。
+        return { type: 'ONE', entities: [entityOf('CREATOR')] };
+      }
+      if (name === ST.REJECTED) {
+        // 申請人自己：駁回後要能再申請
         return { type: 'ANY', entities: [entityOf('CREATOR')] };
       }
       if (TERMINAL_STATES.includes(name)) {
@@ -151,19 +164,22 @@
 
     actions.push(actionOf({ name: ACT.REAPPLY, from: ST.REJECTED, to: ST.DRAFT }));
 
-    // 作廢：每個非終態都掛一條，收在「⋯」選單，限定群組才能按
-    const cancelExecutable = cancelGroups.length > 0
-      ? { entities: cancelGroups.map((g) => entityOf('GROUP', g.code)) }
-      : undefined;
-
-    for (const from of [ST.DRAFT, ...APPROVING_STATES, ST.REJECTED]) {
-      actions.push(actionOf({
-        name: ACT.CANCEL, from, to: ST.CANCELLED,
-        type: 'SECONDARY', executableUser: cancelExecutable,
-      }));
+    // 作廢：每個非終態都掛一條，收在「⋯」選單，限定群組才能按。
+    // ⚠️ kintone 平台規則（2026-09-01 實測）：**SECONDARY 動作的 executableUser 是必填**
+    //    （回「此項必填。」）。所以沒有設定可作廢群組時就**不產生作廢動作**——
+    //    作廢是不可逆的動作，本來就該限定誰能按，硬給一個「誰都能按」的版本更糟。
+    const hasCancel = cancelGroups.length > 0;
+    if (hasCancel) {
+      const cancelExecutable = { entities: cancelGroups.map((g) => entityOf('GROUP', g.code)) };
+      for (const from of [ST.DRAFT, ...APPROVING_STATES, ST.REJECTED]) {
+        actions.push(actionOf({
+          name: ACT.CANCEL, from, to: ST.CANCELLED,
+          type: 'SECONDARY', executableUser: cancelExecutable,
+        }));
+      }
     }
 
-    return { ok: true, payload: { enable: true, states, actions }, error: null };
+    return { ok: true, payload: { enable: true, states, actions }, hasCancel, error: null };
   };
 
   // -------------------------------------------------------------------
@@ -195,6 +211,19 @@
     indices.forEach((v, i) => {
       if (v !== i) errs.push(`狀態的 index 不連續或重複（預期 ${i}，實得 ${v}）。`);
     });
+
+    // kintone 平台規則：index 0 的初始狀態，執行者 type 只能是 ONE
+    const first = Object.values(states).find((s) => String(s.index) === '0');
+    if (first && first.assignee?.type !== 'ONE') {
+      errs.push(`初始狀態「${first.name}」的執行者 type 只能是 ONE（實得 ${first.assignee?.type}）。`);
+    }
+
+    // kintone 平台規則：SECONDARY 動作的 executableUser 必填
+    for (const a of actions) {
+      if (a.type === 'SECONDARY' && !(a.executableUser?.entities ?? []).length) {
+        errs.push(`動作「${a.name}」（${a.from}）是 SECONDARY，必須指定 executableUser。`);
+      }
+    }
 
     // from / to 必須指向存在的狀態——改狀態名時最容易在這裡斷。
     // 注意：**不檢查 from === to**，自迴圈正是本模型的核心機制。
@@ -382,6 +411,10 @@
         `<b>${stateCount} 個狀態、${built.payload.actions.length} 條動作</b>` +
         `（${STATE_ORDER.map(esc).join(' ／ ')}）<br>` +
         `這份設定對每一張表單都相同，關卡有幾關都不影響。<br><br>` +
+        (built.hasCancel ? '' :
+          `<span style="color:#b8860b">⚠️ 這筆路由沒有設定「可作廢群組」，所以<b>不會產生作廢動作</b>。<br>` +
+          `kintone 規定 SECONDARY 動作必須指定可執行的人，而作廢不可逆、本來就該限定誰能按。<br>` +
+          `需要作廢功能的話，先回路由設定補上群組再部署。</span><br><br>`) +
         (legacy.length > 0
           ? `<span style="color:#c00">⚠️ 這個 App 上還有舊版編號狀態：${legacy.map(esc).join('、')}。<br>` +
             `新模板不含這些狀態，部署等同要刪掉它們——只要還有一張單停在上面，kintone 會拒絕整份設定。<br>` +

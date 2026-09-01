@@ -54,6 +54,13 @@ describe('buildStatusJson — 狀態', () => {
     }
   });
 
+  it('🔑 初始狀態（index 0）的 type 必須是 ONE — kintone 平台規則', () => {
+    // 實測：填 ANY 會被拒「初始狀態下，執行者的type只能指定為『ONE』。」
+    const p = build();
+    expect(p.states[DRAFT].index).toBe('0');
+    expect(p.states[DRAFT].assignee.type).toBe('ONE');
+  });
+
   it('🔑 任一人簽用 ANY（ONE 是「指定一人」，名字騙人）；會簽中才是 ALL', () => {
     const p = build();
     expect(p.states[APPROVING].assignee.type).toBe('ANY');
@@ -126,8 +133,12 @@ describe('buildStatusJson — 動作', () => {
     });
   });
 
-  it('✅ 沒設作廢群組 → 不帶 executableUser（沿用該狀態的執行者）', () => {
-    expect(build().actions.find((a) => a.name === '作廢').executableUser).toBeUndefined();
+  it('🔑 沒設作廢群組 → 完全不產生作廢動作', () => {
+    // kintone 規定 SECONDARY 動作的 executableUser 必填（實測，官方文件未載明）。
+    // 省略它會被拒；而作廢不可逆，硬給一個「誰都能按」的版本更糟 → 直接不產生。
+    expect(build().actions.some((a) => a.name === '作廢')).toBe(false);
+    expect(buildStatusJson({ cancelGroups: [] }).hasCancel).toBe(false);
+    expect(buildStatusJson({ cancelGroups: [{ code: 'g' }] }).hasCancel).toBe(true);
   });
 
   it('✅ 簽核者只看到「同意」與「駁回」兩種按鈕', () => {
@@ -203,6 +214,22 @@ describe('validateStatusPayload', () => {
     const p = build();
     p.actions.push({ name: '復活', from: DECIDED, to: DRAFT, filterCond: '', type: 'PRIMARY' });
     expect(validateStatusPayload(p).join()).toContain('終態「核決」不應該有向外的動作');
+  });
+
+  it('🔑 初始狀態 type 不是 ONE → 錯（PUT 前就擋下，不要讓 kintone 回 400）', () => {
+    const p = build();
+    p.states[DRAFT].assignee.type = 'ANY';
+    expect(validateStatusPayload(p).join()).toContain('只能是 ONE');
+  });
+
+  it('🔑 SECONDARY 動作沒帶 executableUser → 錯', () => {
+    const p = build();
+    p.actions.push({ name: '作廢', from: APPROVING, to: CANCELLED, filterCond: '', type: 'SECONDARY' });
+    expect(validateStatusPayload(p).join()).toContain('必須指定 executableUser');
+  });
+
+  it('✅ 有作廢群組時的完整產出仍然無錯', () => {
+    expect(validateStatusPayload(build({ cancelGroups: [{ code: 'g_admin' }] }))).toEqual([]);
   });
 
   it('✅ index 不連續 → 錯', () => {
