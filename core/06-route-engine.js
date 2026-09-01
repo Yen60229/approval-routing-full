@@ -26,6 +26,9 @@
  *                                 不再被當成「申請人自己」丟掉
  *                              ② personalCursor 區分 undefined／null，前段已到終點時明確報錯，
  *                                 不再退回起點重走而誤報「偵測到循環」
+ *   2026-09-01  Jimmy/Claude  P8 Phase C：逐段展開抽為 expandRouteSegments（不解析 holder），
+ *                              buildChainForForm 降為「展開 + finalizeChain」。
+ *                              產生器算 K 值要展開 ~80 個起點角色，只需要鏈長
  */
 (() => {
   'use strict';
@@ -64,6 +67,122 @@
   // -------------------------------------------------------------------
 
   /**
+   * 逐段展開路由，取得「有序的角色關卡」——**不解析 holder、不組裝子表格**
+   *
+   * 抽出來的理由：產生器算 K 值時要對 686 的每一個 distinct 起點角色各展開一次
+   * （約 80 次），只需要「鏈有多長」。若走完整的 buildChainForForm，每次都會
+   * Promise.all 解析 holder（群組還要打 API），80 次的成本完全是白付的；
+   * 而且任何一關暫時沒有簽核者就會 ok:false，K 值算不出來——但 K 是結構問題，
+   * 與「今天那一關有沒有人」無關。
+   *
+   * @param {Object} routeConfig - form_route_config 記錄
+   * @param {Object} p
+   * @param {string} [p.employeeCode]  申請人代碼；需要員工鏈段時用它查起點
+   * @param {string} [p.entryRoleId]   直接給定起點角色，給定時不查 686（產生器用）
+   * @returns {Promise<{ ok: boolean, steps: Array<{role: Object, signingModeOverride: string|null}>, error: string|null }>}
+   */
+  const expandRouteSegments = async (routeConfig, { employeeCode, entryRoleId: givenEntryRoleId } = {}) => {
+    const formAppId = routeConfig[RCF.FORM_APP_ID]?.value;
+
+    const stepRows = (routeConfig[RCF.ROUTE_STEPS]?.value ?? [])
+      .slice() // 不動快取記錄
+      .sort((a, b) => Number(cell(a, RSF.STEP_NO, 0)) - Number(cell(b, RSF.STEP_NO, 0)));
+
+    if (stepRows.length === 0) {
+      return { ok: false, steps: [], error: `表單 ${formAppId} 的路由設定沒有任何關卡` };
+    }
+
+    const visited = new Set();                 // 跨段共用，偵測跨段循環
+    const steps = [];                          // { role, signingModeOverride }
+    let entryRoleId = givenEntryRoleId;        // undefined = 尚未查詢（惰性）
+    // 員工鏈段的續接游標，三種狀態要分得清楚：
+    //   undefined = 還沒有任何員工鏈段 → 下一個員工鏈段從申請人起點開始
+    //   string    = 前一段結束後的「下一關」→ 續接
+    //   null      = 前一段已走到簽核鏈終點 → 後面不該再有員工鏈段（設定錯誤）
+    // 用 `?? 起點` 併掉 null 會讓它默默回頭重走申請人的鏈，撞上 visited 後
+    // 報成「偵測到循環」，維護者會往完全錯的方向查。
+    let personalCursor;
+
+    const resolveEntry = async () => {
+      if (entryRoleId === undefined) entryRoleId = await getEntryRoleId(employeeCode);
+      return entryRoleId;
+    };
+
+    for (let i = 0; i < stepRows.length; i++) {
+      const row = stepRows[i];
+      const segType = cell(row, RSF.SEGMENT_TYPE);
+      const rawMode = cell(row, RSF.STEP_SIGNING_MODE);
+      const override = toSigningOverride(rawMode);
+      const stepLabel = `第 ${i + 1} 段`;
+
+      if (segType === SEG.EMPLOYEE_CHAIN) {
+        // 「全員會簽」的位置必須固定，員工鏈段位置浮動 → 產生器無法生成對應的 ALL 狀態（docs/06 §5.4）
+        if (rawMode === SSM.ALL) {
+          return { ok: false, steps: [], error: `${stepLabel}（員工鏈段）不可指定「全員會簽」，該模式僅限指定角色段` };
+        }
+
+        const isEntrySegment = personalCursor === undefined;
+
+        if (!isEntrySegment && personalCursor === null) {
+          return {
+            ok: false, steps: [],
+            error: `${stepLabel}（員工鏈段）：前面的員工鏈段已走到簽核鏈終點，後面不能再接員工鏈段。` +
+                   `請改用指定角色段，或調整前一段的「簽到職稱為止」。`,
+          };
+        }
+
+        const start = isEntrySegment ? await resolveEntry() : personalCursor;
+        if (!start) {
+          return { ok: false, steps: [], error: `員工 ${employeeCode} 未設定起點角色` };
+        }
+
+        const stopAt = cell(row, RSF.STOP_AT_TITLE_LEVEL) || null;
+        const skip = cell(row, RSF.SKIP_TITLE_LEVELS, []) || [];
+
+        const seg = await walkSegment({
+          startRoleId: start, visited,
+          stopAtTitleLevel: stopAt, skipTitleLevels: skip,
+          isEntrySegment,
+        });
+        if (!seg.ok) {
+          return { ok: false, steps: [], error: `${stepLabel}：${seg.error}` };
+        }
+
+        for (const role of seg.roleRecords) {
+          steps.push({ role, signingModeOverride: override });
+        }
+        personalCursor = seg.nextRoleId;
+
+      } else if (segType === SEG.FIXED_ROLE) {
+        const roleId = cell(row, RSF.ROLE_ID);
+        if (!roleId) {
+          return { ok: false, steps: [], error: `${stepLabel}（指定角色段）未指定角色` };
+        }
+        if (visited.has(roleId)) {
+          return { ok: false, steps: [], error: `${stepLabel}：角色 ${roleId} 在路由中重複出現（跨段循環）` };
+        }
+
+        const role = await getRole(roleId);
+        if (!role) {
+          return { ok: false, steps: [], error: `${stepLabel}：指定角色 ${roleId} 不存在或未啟用` };
+        }
+
+        visited.add(roleId);
+        steps.push({ role, signingModeOverride: override });
+
+      } else {
+        return { ok: false, steps: [], error: `${stepLabel}：未知的段類型「${segType}」` };
+      }
+    }
+
+    if (steps.length === 0) {
+      return { ok: false, steps: [], error: `表單 ${formAppId} 的路由展開後沒有任何簽核關卡，請檢查 stop_at_title_level 設定` };
+    }
+
+    return { ok: true, steps, error: null };
+  };
+
+  /**
    * 依表單路由設定建構簽核鏈
    *
    * @param {string} employeeCode - 申請人的 kintone 使用者代碼
@@ -84,104 +203,14 @@
         return window.ApprovalRouting.buildChain(employeeCode);
       }
 
-      const stepRows = (routeConfig[RCF.ROUTE_STEPS]?.value ?? [])
-        .slice() // 不動快取記錄
-        .sort((a, b) => Number(cell(a, RSF.STEP_NO, 0)) - Number(cell(b, RSF.STEP_NO, 0)));
-
-      if (stepRows.length === 0) {
-        return { ok: false, chain: [], error: `表單 ${formAppId} 的路由設定沒有任何關卡` };
-      }
-
       // 2. 逐段展開
-      const visited = new Set();                 // 跨段共用，偵測跨段循環
-      const steps = [];                          // { role, signingModeOverride }
-      let entryRoleId;                           // undefined = 尚未查詢（惰性）
-      // 員工鏈段的續接游標，三種狀態要分得清楚：
-      //   undefined = 還沒有任何員工鏈段 → 下一個員工鏈段從申請人起點開始
-      //   string    = 前一段結束後的「下一關」→ 續接
-      //   null      = 前一段已走到簽核鏈終點 → 後面不該再有員工鏈段（設定錯誤）
-      // 用 `?? 起點` 併掉 null 會讓它默默回頭重走申請人的鏈，撞上 visited 後
-      // 報成「偵測到循環」，維護者會往完全錯的方向查。
-      let personalCursor;
-
-      const resolveEntry = async () => {
-        if (entryRoleId === undefined) entryRoleId = await getEntryRoleId(employeeCode);
-        return entryRoleId;
-      };
-
-      for (let i = 0; i < stepRows.length; i++) {
-        const row = stepRows[i];
-        const segType = cell(row, RSF.SEGMENT_TYPE);
-        const rawMode = cell(row, RSF.STEP_SIGNING_MODE);
-        const override = toSigningOverride(rawMode);
-        const stepLabel = `第 ${i + 1} 段`;
-
-        if (segType === SEG.EMPLOYEE_CHAIN) {
-          // 「全員會簽」的位置必須固定，員工鏈段位置浮動 → 產生器無法生成對應的 ALL 狀態（docs/06 §5.4）
-          if (rawMode === SSM.ALL) {
-            return { ok: false, chain: [], error: `${stepLabel}（員工鏈段）不可指定「全員會簽」，該模式僅限指定角色段` };
-          }
-
-          const isEntrySegment = personalCursor === undefined;
-
-          if (!isEntrySegment && personalCursor === null) {
-            return {
-              ok: false, chain: [],
-              error: `${stepLabel}（員工鏈段）：前面的員工鏈段已走到簽核鏈終點，後面不能再接員工鏈段。` +
-                     `請改用指定角色段，或調整前一段的「簽到職稱為止」。`,
-            };
-          }
-
-          const start = isEntrySegment ? await resolveEntry() : personalCursor;
-          if (!start) {
-            return { ok: false, chain: [], error: `員工 ${employeeCode} 未設定起點角色` };
-          }
-
-          const stopAt = cell(row, RSF.STOP_AT_TITLE_LEVEL) || null;
-          const skip = cell(row, RSF.SKIP_TITLE_LEVELS, []) || [];
-
-          const seg = await walkSegment({
-            startRoleId: start, visited,
-            stopAtTitleLevel: stopAt, skipTitleLevels: skip,
-            isEntrySegment,
-          });
-          if (!seg.ok) {
-            return { ok: false, chain: [], error: `${stepLabel}：${seg.error}` };
-          }
-
-          for (const role of seg.roleRecords) {
-            steps.push({ role, signingModeOverride: override });
-          }
-          personalCursor = seg.nextRoleId;
-
-        } else if (segType === SEG.FIXED_ROLE) {
-          const roleId = cell(row, RSF.ROLE_ID);
-          if (!roleId) {
-            return { ok: false, chain: [], error: `${stepLabel}（指定角色段）未指定角色` };
-          }
-          if (visited.has(roleId)) {
-            return { ok: false, chain: [], error: `${stepLabel}：角色 ${roleId} 在路由中重複出現（跨段循環）` };
-          }
-
-          const role = await getRole(roleId);
-          if (!role) {
-            return { ok: false, chain: [], error: `${stepLabel}：指定角色 ${roleId} 不存在或未啟用` };
-          }
-
-          visited.add(roleId);
-          steps.push({ role, signingModeOverride: override });
-
-        } else {
-          return { ok: false, chain: [], error: `${stepLabel}：未知的段類型「${segType}」` };
-        }
-      }
-
-      if (steps.length === 0) {
-        return { ok: false, chain: [], error: `表單 ${formAppId} 的路由展開後沒有任何簽核關卡，請檢查 stop_at_title_level 設定` };
+      const expanded = await expandRouteSegments(routeConfig, { employeeCode });
+      if (!expanded.ok) {
+        return { ok: false, chain: [], error: expanded.error };
       }
 
       // 3. 解析 holder → 擋空簽核者 → 組裝子表格（複用 03 的 finalizeChain）
-      return finalizeChain(steps);
+      return finalizeChain(expanded.steps);
 
     } catch (err) {
       return { ok: false, chain: [], error: err.message ?? String(err) };
@@ -204,5 +233,7 @@
   window.ApprovalRouting.RouteEngine = Object.freeze({
     buildChainForForm,
     buildChainForFormCurrentUser,
+    // 結構展開（不解析 holder）——tools/10 產生器算 K 值用，見 expandRouteSegments 的說明
+    expandRouteSegments,
   });
 })();

@@ -6,10 +6,10 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P8 Phase B — 程式碼完成，待 kintone 端驗證；下一步 Phase C 產生器**
+- **當前 Phase**:**P8 Phase C 程式碼完成，待 kintone 端實測；下一步 Phase D adapter**
 - **最後更新**:2026-09-01
-- **git**:全部已 commit + push，工作區乾淨
-- **測試**:`npm test` → **158 項全過**（6 檔）
+- **git**:全部已 commit，工作區乾淨
+- **測試**:`npm test` → **202 項全過**（7 檔）
 
 ### 2026-09-01 全盤分析 + 段接續修正
 
@@ -58,7 +58,7 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 |-----|------|
 | **685** | `coding_tools` → `core/01,05,04,02,03,06,07` → `apps/role-definition/01~07` → `tools/04,05,06,08,09` |
 | **686** | `coding_tools` → `core/05,04,01,02,03` → `apps/employee-entry/01,02` → `tools/05,07` |
-| **736** | `coding_tools` → `core/01,05,04,02,03,06,07` → `apps/form-route/01-route-form` |
+| **736** | `coding_tools` → `core/01,05,04,02,03,06,07` → `apps/form-route/01-route-form` → `tools/10-status-generator` |
 
 > 硬性規則：`core/07` 要在 `apps/*/03` 與 `apps/form-route/01` 之前；`core/03` 要在 `core/06` 之前（core 一律先載，自動滿足）。
 > 736 的 `core/03` + `core/06` 目前用不到（`01-route-form` 只用 `getAllRoles` + RolePicker），留著無害，日後加即時預覽會用到。
@@ -348,10 +348,31 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 - [ ] 驗證更新執行者 API：測試 App 上確認「狀態已設執行者時 `PUT /k/v1/record/assignees`
       帶 revision 可成功換人、換完該人能執行動作」（比 proceed 改欄位穩，但仍要實測一次）← **需測試 App**
 
-#### ⬜ Phase C／D — 產生器與 adapter（第三輪）
-- [ ] `tools/10-status-generator.js` — 掛在路由表列表頁
-  - K 值算法：取 686 的 distinct `entry_role_id`（~80 個）各展開一次取 max，**不要掃 500 名員工**
-  - 管線：GET 備份 → generate → validate → PUT preview → 人工確認 → deploy → 回寫 `max_depth`/`deployed_at`/`deployed_hash`
+#### ✅ Phase C — status.json 產生器（2026-09-01，程式碼完成待 kintone 實測）
+- [x] **實作前查證 kintone 官方文件**，docs/06 升版 1.3（三處修正，見該檔變更履歷）
+  - `assignee.type`：任一人簽＝`ANY`（`ONE` 是「**指定**一人」，名字騙人）；全員會簽＝`ALL`
+  - `entity.type`：使用者選擇欄位＝`FIELD_ENTITY`（不是 `CUSTOM_FIELD`）；申請人＝`CREATOR`
+  - **同名動作 + 互補 filterCond 確認是標準手法** → §5.2 變動深度設計成立
+  - `actions` 另有 `type`(PRIMARY/SECONDARY) 與 `executableUser` → 作廢動作用得到
+- [x] `core/06-route-engine.js` — 逐段展開抽為 `expandRouteSegments`（不解析 holder）
+  - 算 K 要展開 ~80 個起點，走完整 `buildChainForForm` 等於白付 80 次 holder 解析；
+    而且「那一關今天沒人」會讓 K 算不出來——K 是結構問題，與當下有沒有人無關
+- [x] `core/02-api-client.js` — `getDistinctEntryRoleIds()`：686 的 distinct 起點（~80）而非全員（~500）
+- [x] `tools/10-status-generator.js` — 掛 736 清單頁「產生流程設定」按鈕
+  - 純函式：`buildStatusJson` / `validateStatusPayload` / `resolveAllSigningPositions` /
+    `hashRouteConfig` / `countApprovingStates` / `computeMaxDepth`
+  - 管線：GET 備份（可下載 JSON）→ 算 K → generate → validate → PUT preview（帶 revision）
+    → 人工確認 → deploy → 輪詢至 SUCCESS → 回寫 `max_depth`/`deployed_at`/`deployed_hash`
+  - **產生器只增不減**（docs/06 §5.6 新增）：kintone 不允許刪除「還有記錄停在上面」的狀態，
+    **且刪掉的狀態名不能再用**。K 會隨組織上下浮動，照著刪等於消耗不可回收的狀態名
+  - **全員會簽的位置限制**：只有排在所有員工鏈段之前的指定角色段位置才固定，
+    否則擋下並說明原因（docs/06 §5.4 補精確定義）
+- [x] 測試 `status-generator`（39）+ `getDistinctEntryRoleIds`（5）→ **202 項全過**
+- [ ] ⚠️ **736 上傳後實測整條管線**（先拿測試 App 跑一次 K=2，確認同名「核准」動作
+      在畫面上只出現**一顆**按鈕；這是 §5.2 唯一無法從文件百分之百確認的一點）
+- [ ] 上傳順序：736 加掛 `tools/10-status-generator.js`（需排在 `core/06` 之後）
+
+#### ⬜ Phase D — 標準 adapter（下一輪）
 - [ ] `adapters/00-standard-adapter.js` — 一支掛所有申請 App
   - submit 需檢查 `chain.length > max_depth`（組織變動會讓鏈長超過已部署狀態數，單子會卡在最後一關）
   - submit 僅在「草稿」狀態重算鏈；proceed 需防 race（`current_step` 與動作關卡不一致即擋下）
@@ -424,5 +445,6 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 | **P8 Phase A** | **2026-08-31** | 引擎前置修復 4 項（docs/05 #1#2#3#4）完成，91 項測試全過 |
 | **P8 Phase B a/b/c** | **2026-08-31** | ROUTE 欄位代碼、`getRouteConfig` 全量快取、`core/06-route-engine.js` `buildChainForForm`；`walkSegment`/`finalizeChain` 由 03 抽出共用；120 項測試全過。剩 d（表單 UI）卡 App 736 掛載 |
 | **P8 執行者機制定案** | **2026-08-31** | 基石假設否決：proceed 直寫欄位不穩（已知行為），執行者改用「更新執行者 API」`PUT /k/v1/record/assignees` 為權威 + `detail.show` 安全網；docs/06 升 1.2、docs/02 與對話脈絡 §9.8 同步 |
+| **P8 Phase C** | **2026-09-01** | status.json 產生器：`tools/10-status-generator.js` + `expandRouteSegments` 抽出 + `getDistinctEntryRoleIds`。實作前查證推翻三項推測（`ANY` vs `ONE`、`FIELD_ENTITY` vs `CUSTOM_FIELD`、只增不減），docs/06 升 1.3。202 項測試全過。剩 736 上傳實測整條管線 |
 | **P8 段接續修正** | **2026-09-01** | 全盤分析掃出兩個真 bug：續段第一關被「主管送單不用簽自己」規則誤吃（`walkSegment` 補 `isEntrySegment`）、續段接在終點後誤報循環（`personalCursor` 改三態）；順帶補 `step_no` 混填／重複驗證。158 項測試全過 |
 | **P8 Phase B 收尾** | **2026-09-01** | App 736 建好＋schema 驗證、App ID 回填 736；`core/07-role-picker.js` 抽共用（方案 A）＋`03` 改用；`apps/form-route/01-route-form.js`（子表格逐列 DOM 淡化＋RolePicker＋`validateRouteSteps`）。149 項測試全過。剩：736／685 手動回歸、更新執行者 API 實測 |

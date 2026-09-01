@@ -21,6 +21,8 @@
  *   2026-08-31  Jimmy/Claude  P8 Phase B：新增 form_route_config 全量快取
  *                              （getRouteConfig / clearRouteConfigCache，比照 loadAllRoles
  *                              三道防線）；ensureFresh 一併清路由快取
+ *   2026-09-01  Jimmy/Claude  P8 Phase C：新增 getDistinctEntryRoleIds()，
+ *                              產生器算 K 值取 686 的 distinct 起點（~80）而非掃全員（~500）
  */
 (() => {
   'use strict';
@@ -225,6 +227,42 @@
     return getEntryRoleId(userCode);
   };
 
+  /**
+   * 取得「所有被當成起點用到的角色 ID」（去重）
+   *
+   * 產生器算 K 值（最大鏈深）用。**不要掃 500 名員工各展開一次**——
+   * 鏈的深度只取決於從哪個角色起步，500 名員工其實只對應約 80 個 distinct
+   * 起點角色，展開次數差 6 倍以上，而結果完全相同。
+   *
+   * 只取啟用中的起點：已停用的員工不會送單，他們的起點不該撐大 K
+   * （K 變大 = 流程狀態變多 = 每個表單都要多部署幾個用不到的狀態）。
+   *
+   * @returns {Promise<string[]>} 去重後的 entry_role_id，不含空值
+   */
+  const getDistinctEntryRoleIds = async () => {
+    const ids = new Set();
+    let offset = 0;
+    const limit = 500;
+
+    while (true) {
+      const resp = await api('/k/v1/records', 'GET', {
+        app: APP_ID.EMPLOYEE_ENTRY,
+        query: `${EF.IS_ACTIVE} in ("${CHECKBOX.ACTIVE}") limit ${limit} offset ${offset}`,
+        fields: [EF.ENTRY_ROLE_ID],
+      });
+
+      for (const rec of resp.records) {
+        const id = rec[EF.ENTRY_ROLE_ID]?.value;
+        if (id) ids.add(id);
+      }
+
+      if (resp.records.length < limit) break;
+      offset += limit;
+    }
+
+    return [...ids];
+  };
+
   // --- 表單路由設定表（form_route_config, App 3）---
 
   /**
@@ -321,6 +359,7 @@
     ensureFreshRoles,
     getEntryRoleId,
     getCurrentUserEntryRoleId,
+    getDistinctEntryRoleIds,
     getRouteConfig,
     clearRouteConfigCache,
     getGroupMembers,

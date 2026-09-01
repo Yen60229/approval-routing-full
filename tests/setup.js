@@ -136,6 +136,7 @@ const mockEnsureFreshRoles   = vi.fn().mockResolvedValue(undefined);
 const mockEnsureFresh        = vi.fn().mockResolvedValue(undefined);
 const mockGetEntryRoleId     = vi.fn();
 const mockGetCurrentUserEntry= vi.fn();
+const mockGetDistinctEntryRoleIds = vi.fn();
 const mockGetGroupMembers    = vi.fn();
 const mockGetRouteConfig     = vi.fn();
 const mockClearRouteConfigCache = vi.fn();
@@ -154,6 +155,7 @@ global.window.ApprovalRouting = {
     ensureFreshRoles:         mockEnsureFreshRoles,
     getEntryRoleId:           mockGetEntryRoleId,
     getCurrentUserEntryRoleId: mockGetCurrentUserEntry,
+    getDistinctEntryRoleIds:  mockGetDistinctEntryRoleIds,
     getGroupMembers:          mockGetGroupMembers,
     getRouteConfig:           mockGetRouteConfig,
     clearRouteConfigCache:    mockClearRouteConfigCache,
@@ -187,6 +189,7 @@ global.__mocks__ = {
   ensureFresh:       mockEnsureFresh,
   ensureFreshRoles:  mockEnsureFreshRoles,
   getEntryRoleId:    mockGetEntryRoleId,
+  getDistinctEntryRoleIds: mockGetDistinctEntryRoleIds,
   getGroupMembers:   mockGetGroupMembers,
   getRouteConfig:    mockGetRouteConfig,
   clearRouteConfigCache: mockClearRouteConfigCache,
