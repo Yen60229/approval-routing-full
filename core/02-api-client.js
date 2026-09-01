@@ -23,6 +23,9 @@
  *                              三道防線）；ensureFresh 一併清路由快取
  *   2026-09-01  Jimmy/Claude  P8 Phase C 曾新增 getDistinctEntryRoleIds()（產生器算 K 值用），
  *                              同日狀態模型改版後 K 的概念消失、該函式無人使用，已移除
+ *   2026-09-01  Jimmy/Claude  修 getGroupMembers 的路徑：User API 是 `/v1/group/users`
+ *                              不帶 `/k`。P8 之前沒有流程會解析群組角色成員，
+ *                              所以這行從初版錯到現在都沒被執行過
  */
 (() => {
   'use strict';
@@ -300,16 +303,27 @@
 
   /**
    * 取得群組成員代碼清單
+   *
+   * 路徑是 `/v1/group/users`，**沒有 `/k`**——這是 cybozu.com 的 User API，
+   * 與 kintone App API（`/k/v1/...`）分屬兩套端點，寫錯會回一整頁 404 HTML。
+   * 同一個坑在 `04-chain-preview.js` 與 `05-detail-card.js` 已各修過一次
+   * （2026-05-03），本檔漏掉——因為 P8 之前沒有任何流程會走到「解析群組角色
+   * 的成員」這一步，這行從初版錯到現在都沒被執行過。
+   *
+   * 參數是 `code` 不是 `id`；也不要包 `kintone.api.url()`（本專案其他 User API
+   * 呼叫都是直接給相對路徑，已實測可行）。
+   *
    * @param {string} groupCode
    * @returns {Promise<string[]>} 成員 code 陣列
    */
   const getGroupMembers = async (groupCode) => {
-    const members = await kintone.api(
-      kintone.api.url('/k/v1/group/users.json', true),
-      'GET',
-      { code: groupCode }
-    );
-    return members.users.map((u) => u.code);
+    try {
+      // 注意：User API 沒有 /k，寫成 /k/v1/... 會回 404 HTML
+      const members = await kintone.api('/v1/group/users', 'GET', { code: groupCode });
+      return (members.users ?? []).map((u) => u.code);
+    } catch (err) {
+      throw apiError(err, '/v1/group/users', 'GET');
+    }
   };
 
   // 掛到全域
