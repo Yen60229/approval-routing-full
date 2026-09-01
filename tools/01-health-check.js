@@ -1,7 +1,7 @@
 /**
- * 健康檢查工具 — 找循環鏈、斷鏈、孤立角色、空 holder
+ * 角色表健檢工具 — 找循環鏈、斷鏈、孤立角色、空 holder
  *
- * 在角色定義表列表頁的「體檢」選單提供「健康檢查」，
+ * 在角色定義表列表頁的「系統健檢」選單提供「角色表健檢」，
  * 點擊後掃描整張角色表，以報告方式呈現問題。
  *
  * 【問題類型】
@@ -32,12 +32,20 @@
 
   const MAX_DEPTH = 20;
 
+  const esc = (s) => String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  /** 記錄編輯頁連結（與 apps/role-definition/05-detail-card.js 同一種寫法） */
+  const editUrl = (recordId) =>
+    `${location.origin}/k/${APP_ID.ROLE_DEFINITION}/show#record=${recordId}&mode=edit`;
+
   // -------------------------------------------------------------------
   // 檢查邏輯
   // -------------------------------------------------------------------
 
   /**
-   * 執行完整健康檢查
+   * 執行完整的角色表健檢
    * @returns {Promise<Object>} 檢查報告
    */
   const runHealthCheck = async () => {
@@ -136,7 +144,7 @@
 
     for (const [roleId, rec] of roleMap) {
       if (!pointedTo.has(roleId) && !entryRoleIds.has(roleId)) {
-        issues.orphan.push({ roleId, roleName: rec[RF.ROLE_NAME].value });
+        issues.orphan.push({ roleId, roleName: rec[RF.ROLE_NAME].value, recordId: rec.$id.value });
       }
     }
 
@@ -225,7 +233,9 @@
         ${section('🟡 空簽核者', '#f57f17', issues.noHolder,
           (i) => `<li><strong>${i.roleName}</strong>（${i.roleId}）未設定簽核者</li>`)}
         ${section('🔵 孤立角色', '#1565c0', issues.orphan,
-          (i) => `<li><strong>${i.roleName}</strong>（${i.roleId}）沒有任何角色或員工指向它</li>`)}
+          (i) => `<li><a href="${editUrl(i.recordId)}" target="_blank" rel="noopener"
+              style="color:#1565c0; text-decoration:underline;">${esc(i.roleName)}</a>
+              （${esc(i.roleId)}）沒有任何角色或員工指向它</li>`)}
         ${section('⚪ 鏈過深', '#555', issues.noEnd,
           (i) => `<li>從 <code>${i.startId}</code> 出發，超過 ${MAX_DEPTH} 層未到終點</li>`)}
       </div>`;
@@ -236,7 +246,7 @@
   // -------------------------------------------------------------------
 
   const runAndShow = async () => {
-    Swal.fire({ title: '健康檢查中...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    Swal.fire({ title: '角色表健檢中...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
 
     const report = await runHealthCheck();
     Swal.close();
@@ -253,7 +263,7 @@
   window.ApprovalRouting.ToolRegistry.register({
     id:    'health-check',
     group: 'inspect',
-    label: '健康檢查',
+    label: '角色表健檢',
     hint:  '循環鏈、斷鏈、孤立角色、沒有簽核者的關卡',
     apps:  [APP_ID.ROLE_DEFINITION],
     run:   runAndShow,

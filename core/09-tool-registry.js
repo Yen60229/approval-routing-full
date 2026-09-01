@@ -1,5 +1,5 @@
 /**
- * 工具列註冊表 — 把散落在列表頁的十幾顆按鈕，收成「體檢／查詢／維護／部署」四顆下拉
+ * 工具列註冊表 — 把散落在列表頁的十幾顆按鈕，收成「系統健檢／查詢／維護／部署」四顆下拉
  *
  * 為什麼要這層：工具一支支長出來之後，685 的列表頁最多會同時出現 9 顆按鈕，
  * HR 得記住哪顆做什麼；而且每支各自寫一遍「建立按鈕 → 找 header → appendChild」，
@@ -9,7 +9,7 @@
  * 只把最後那段掛按鈕換成 `ToolRegistry.register({...})`。
  *
  * 【分組】docs/10-工具按鈕盤點與分組.md
- *   體檢 inspect  — 掃描 → 勾選 → 批次修正（互動一致、資料來源重疊）
+ *   系統健檢 inspect  — 掃描 → 勾選 → 批次修正（互動一致、資料來源重疊）
  *   查詢 query    — 唯讀，輸入關鍵字看一條鏈
  *   維護 maintain — 主動性的大量寫入作業
  *   部署 deploy   — 把流程設定寫進申請 App（只在 736）
@@ -33,7 +33,7 @@
   const CONTAINER_ID = 'ar-toolbar';
 
   const GROUPS = Object.freeze([
-    Object.freeze({ key: 'inspect',  label: '體檢', color: '#8e44ad', hint: '掃出問題並就地修正' }),
+    Object.freeze({ key: 'inspect',  label: '系統健檢', color: '#8e44ad', hint: '掃出問題並就地修正' }),
     Object.freeze({ key: 'query',    label: '查詢', color: '#2980b9', hint: '唯讀，不會寫入任何資料' }),
     Object.freeze({ key: 'maintain', label: '維護', color: '#16a085', hint: '大量建立或修改設定' }),
     Object.freeze({ key: 'deploy',   label: '部署', color: '#b45309', hint: '寫入申請 App 的流程設定' }),

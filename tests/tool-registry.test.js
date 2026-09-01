@@ -85,7 +85,7 @@ describe('mountInto', () => {
     Registry().mountInto(host, appId);
 
     const labels = [...host.querySelectorAll('button[data-group]')].map((b) => b.textContent);
-    expect(labels).toEqual(['體檢 ▾', '查詢 ▾']);
+    expect(labels).toEqual(['系統健檢 ▾', '查詢 ▾']);
   });
 
   it('重複掛載不會疊出第二條工具列', () => {
