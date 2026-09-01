@@ -33,6 +33,8 @@
  *                              原本回扁平欄位物件，kintone 寫入時會逐列報
  *                              「event.record['approver_chain'].value[n] 錯誤」；
  *                              adapter 的讀取端一直是照 `row.value[...]` 寫的，兩邊本來就對不上
+ *   2026-09-01  Jimmy/Claude  子表格欄位補上 `type`（只給 value 會被 kintone 判型別錯誤）；
+ *                              空的 signed_at 改寫 null 而非空字串
  */
 (() => {
   'use strict';
@@ -42,6 +44,7 @@
     HOLDER_TYPE_OPTIONS: HT,
     CHECKBOX,
     CHAIN_FIELDS: CF,
+    CHAIN_FIELD_TYPES: CFT,
     SIGNING_MODE_OPTIONS: SM,
     STATUS_TEMPLATE: STATUS,
   } = window.ApprovalRouting.Config;
@@ -109,18 +112,22 @@
     // ⚠️ 子表格的每一列必須包成 `{ value: {欄位...} }`，不能是扁平的欄位物件——
     //    直接塞扁平物件，kintone 會回「event.record['approver_chain'].value[n] 錯誤」。
     //    新增的列不用給 id，kintone 會自己配。
+    // 欄位物件必須是 `{ type, value }`——只給 value 會被判型別錯誤。
+    // 子表格是整批新建列，沒有原本的欄位物件可沿用，型別得自己帶（見 Config.CHAIN_FIELD_TYPES）。
+    const f = (code, value) => ({ type: CFT[code], value });
+
     return {
       value: {
-        // NUMBER 欄位一律寫字串：kintone 對數值欄的期望型別是字串，
-        // 給數字雖然多半也吃得下，但子表格內比較嚴格
-        [CF.STEP_NO]:          { value: String(stepNo) },
-        [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
-        [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
-        [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
-        [CF.STEP_STATE]:       { value: effectiveState },
-        [CF.SIGNING_MODE]:     { value: signingMode },
-        [CF.SIGNED_BY]:        { value: [] },
-        [CF.SIGNED_AT]:        { value: '' },
+        // NUMBER 欄位一律寫字串：kintone 對數值欄的期望型別是字串
+        [CF.STEP_NO]:          f(CF.STEP_NO, String(stepNo)),
+        [CF.ROLE_ID]:          f(CF.ROLE_ID, roleRecord[RF.ROLE_ID].value),
+        [CF.STEP_NAME]:        f(CF.STEP_NAME, roleRecord[RF.ROLE_NAME].value),
+        [CF.EXPECTED_SIGNERS]: f(CF.EXPECTED_SIGNERS, holders.map((code) => ({ code }))),
+        [CF.STEP_STATE]:       f(CF.STEP_STATE, effectiveState),
+        [CF.SIGNING_MODE]:     f(CF.SIGNING_MODE, signingMode),
+        [CF.SIGNED_BY]:        f(CF.SIGNED_BY, []),
+        // 空的 DATETIME 是 null，不是空字串——給 '' 會被判為無效的日期時間值
+        [CF.SIGNED_AT]:        f(CF.SIGNED_AT, null),
       },
     };
   };

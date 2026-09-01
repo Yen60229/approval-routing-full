@@ -145,6 +145,16 @@ const Config = Object.freeze({
     SIGNED_BY:        'signed_by',
     SIGNED_AT:        'signed_at',
   }),
+  CHAIN_FIELD_TYPES: Object.freeze({
+    step_no:          'NUMBER',
+    role_id:          'SINGLE_LINE_TEXT',
+    step_name:        'SINGLE_LINE_TEXT',
+    expected_signers: 'USER_SELECT',
+    signing_mode:     'SINGLE_LINE_TEXT',
+    step_state:       'SINGLE_LINE_TEXT',
+    signed_by:        'USER_SELECT',
+    signed_at:        'DATETIME',
+  }),
   ROLE_ID_PREFIX: 'ROLE_',
 });
 

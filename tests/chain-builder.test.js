@@ -80,9 +80,13 @@ describe('buildChain()', () => {
     expect(chain[2].value.step_name.value).toBe('總經理');
     expect(chain[2].value.expected_signers.value).toEqual([{ code: 'wang.ceo' }]);
 
+    // 每個欄位都要帶 type，只給 value 會被 kintone 判型別錯誤
+    expect(chain[0].value.step_no).toEqual({ type: 'NUMBER', value: '1' });
+    expect(chain[0].value.expected_signers.type).toBe('USER_SELECT');
+
     // 子表格格式確認：signed_by / signed_at 為空
     expect(chain[0].value.signed_by.value).toEqual([]);
-    expect(chain[0].value.signed_at.value).toBe('');
+    expect(chain[0].value.signed_at.value).toBeNull(); // 空的 DATETIME 是 null，不是空字串
   });
 
   it('✅ 員工未設定起點角色：回傳 ok=false + 明確錯誤訊息', async () => {

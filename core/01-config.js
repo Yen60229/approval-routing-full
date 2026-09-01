@@ -209,6 +209,26 @@
     SIGNED_AT:        'signed_at',
   });
 
+  /**
+   * `approver_chain` 各欄的 kintone 欄位型別
+   *
+   * ⚠️ 寫入 `event.record` 的欄位物件必須是 `{ type, value }`，只給 value 會被
+   *    kintone 判為型別錯誤（逐列回報 `approver_chain.value[n] 錯誤`）。
+   *    子表格是整批新建列，沒有原本的欄位物件可沿用，型別只能由我們自己帶上。
+   *
+   * 這份型別必須與各申請 App 實際建的欄位一致（規格見 docs/02）。
+   */
+  const CHAIN_FIELD_TYPES = Object.freeze({
+    [CHAIN_FIELDS.STEP_NO]:          'NUMBER',
+    [CHAIN_FIELDS.ROLE_ID]:          'SINGLE_LINE_TEXT',
+    [CHAIN_FIELDS.STEP_NAME]:        'SINGLE_LINE_TEXT',
+    [CHAIN_FIELDS.EXPECTED_SIGNERS]: 'USER_SELECT',
+    [CHAIN_FIELDS.SIGNING_MODE]:     'SINGLE_LINE_TEXT',
+    [CHAIN_FIELDS.STEP_STATE]:       'SINGLE_LINE_TEXT',
+    [CHAIN_FIELDS.SIGNED_BY]:        'USER_SELECT',
+    [CHAIN_FIELDS.SIGNED_AT]:        'DATETIME',
+  });
+
   /** role_id 自動產生前綴 */
   const ROLE_ID_PREFIX = 'ROLE_';
 
@@ -232,6 +252,7 @@
     TERMINAL_STATES,
     ACTION_TEMPLATE,
     CHAIN_FIELDS,
+    CHAIN_FIELD_TYPES,
     ROLE_ID_PREFIX,
   });
 })();
