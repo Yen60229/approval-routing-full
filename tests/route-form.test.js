@@ -95,6 +95,18 @@ describe('validateRouteSteps', () => {
     expect(e[1]).toContain('第 3 列');
   });
 
+  it('🔑 截止職稱同時出現在跳過清單 → 錯（那一關會被跳過、等於沒簽）', () => {
+    // 實測踩到的：stop=部長 且 skip=[部長]，引擎走到部長就停但不 push，
+    // 結果鏈停在次長、部長根本沒簽，畫面上完全看不出來
+    const e = validateRouteSteps([row({ seg: EMP, stopAt: '部長', skip: ['部長'] })], KNOWN);
+    expect(e).toHaveLength(1);
+    expect(e[0]).toContain('都指定了「部長」');
+  });
+
+  it('✅ 跳過清單只含中間職稱 → 合法', () => {
+    expect(validateRouteSteps([row({ seg: EMP, stopAt: '部長', skip: ['次長'] })], KNOWN)).toEqual([]);
+  });
+
   // ── step_no：順序決定段的接續關係，排錯等於鏈錯 ───────────────────────────
 
   it('✅ step_no 全部留空 → 合法（以畫面列順序為準）', () => {
