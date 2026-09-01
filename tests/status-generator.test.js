@@ -1,149 +1,125 @@
 /**
  * tools/10-status-generator.js 的純函式測試
  *
- * 範圍：狀態圖產生、驗證、全員會簽位置判定、部署指紋、K 值計算。
+ * 範圍：狀態圖產生、驗證、部署指紋、舊編號狀態偵測。
  * UI（SweetAlert 流程、按鈕）與 REST 呼叫不在此範圍。
+ *
+ * 核心不變式：**除了「可作廢群組」之外，產出對每一張表單完全相同**。
+ * 關卡有幾關、走哪種段，都不影響狀態圖——那是 adapter 靠 next_state 決定的。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ROLES_ROUTE_ALL, makeRouteConfig } from './helpers/mock-roles.js';
+import { describe, it, expect } from 'vitest';
 
-await import('../core/03-chain-builder.js');
-await import('../core/06-route-engine.js');
 await import('../tools/10-status-generator.js');
 
 const {
   buildStatusJson,
   validateStatusPayload,
-  resolveAllSigningPositions,
-  hashRouteConfig,
-  countApprovingStates,
-  computeMaxDepth,
-  TPL,
+  hashStatusPayload,
+  findLegacyNumberedStates,
+  STATE_ORDER,
 } = window.ApprovalRouting.StatusGeneratorInternals;
 
-const { getRole, getEntryRoleId, getDistinctEntryRoleIds } = global.__mocks__;
+const DRAFT = '草稿';
+const APPROVING = '簽核中';
+const HANDLER = '經辦人確認中';
+const COSIGNING = '會簽中';
+const REJECTED = '駁回';
+const DECIDED = '核決';
+const CANCELLED = '作廢';
 
-const EMP = '員工鏈段';
-const FIX = '指定角色段';
-const ALL = '全員會簽';
-
-/** 只取 from→to 的精簡表示，方便斷言 */
-const actionSigs = (payload, name) =>
+/** 取某個動作的 from→to[條件] 精簡表示 */
+const sigs = (payload, name) =>
   payload.actions.filter((a) => a.name === name).map((a) => `${a.from}→${a.to}[${a.filterCond}]`);
 
-const cfg = (steps, extra = {}) => makeRouteConfig({ formAppId: 1001, steps, ...extra });
+const build = (o) => buildStatusJson(o).payload;
 
-beforeEach(() => {
-  vi.resetAllMocks();
-  getRole.mockImplementation(async (id) => ROLES_ROUTE_ALL[id] ?? null);
-});
-
-// ── 狀態產生 ────────────────────────────────────────────────────────────────
+// ── 狀態 ────────────────────────────────────────────────────────────────────
 
 describe('buildStatusJson — 狀態', () => {
 
-  it('✅ K=3：草稿 + 簽核中(1..3) + 核准 + 駁回 + 作廢，index 從 0 連續', () => {
-    const { ok, payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 3 });
-
-    expect(ok).toBe(true);
-    expect(Object.keys(payload.states)).toEqual([
-      '草稿', '簽核中(1)', '簽核中(2)', '簽核中(3)', '核准', '駁回', '作廢',
+  it('✅ 固定 7 個狀態，index 從 0 連續', () => {
+    const p = build();
+    expect(Object.keys(p.states)).toEqual([
+      DRAFT, APPROVING, HANDLER, COSIGNING, REJECTED, DECIDED, CANCELLED,
     ]);
-    expect(Object.values(payload.states).map((s) => s.index)).toEqual(['0', '1', '2', '3', '4', '5', '6']);
+    expect(Object.values(p.states).map((s) => s.index)).toEqual(['0', '1', '2', '3', '4', '5', '6']);
   });
 
-  it('✅ 簽核關卡的執行者掛 current_approvers（FIELD_ENTITY，不是 CUSTOM_FIELD）', () => {
-    const { payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 2 });
-
-    expect(payload.states['簽核中(1)'].assignee).toEqual({
-      type: 'ANY',
-      entities: [{ entity: { type: 'FIELD_ENTITY', code: 'current_approvers' }, includeSubs: false }],
-    });
+  it('🔑 三個簽核狀態的執行者掛 current_approvers（FIELD_ENTITY，不是 CUSTOM_FIELD）', () => {
+    const p = build();
+    for (const name of [APPROVING, HANDLER, COSIGNING]) {
+      expect(p.states[name].assignee.entities).toEqual([
+        { entity: { type: 'FIELD_ENTITY', code: 'current_approvers' }, includeSubs: false },
+      ]);
+    }
   });
 
-  it('✅ 任一人簽用 ANY（不是 ONE——ONE 是「指定一人」）', () => {
-    const { payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 2 });
-    expect(payload.states['簽核中(1)'].assignee.type).toBe('ANY');
-    expect(payload.states['簽核中(2)'].assignee.type).toBe('ANY');
+  it('🔑 任一人簽用 ANY（ONE 是「指定一人」，名字騙人）；會簽中才是 ALL', () => {
+    const p = build();
+    expect(p.states[APPROVING].assignee.type).toBe('ANY');
+    expect(p.states[HANDLER].assignee.type).toBe('ANY');
+    expect(p.states[COSIGNING].assignee.type).toBe('ALL');
   });
 
-  it('✅ 終態（核准／作廢）不設執行者；駁回掛 CREATOR 讓申請人能再申請', () => {
-    const { payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 1 });
-
-    expect(payload.states['核准'].assignee.entities).toEqual([]);
-    expect(payload.states['作廢'].assignee.entities).toEqual([]);
-    expect(payload.states['駁回'].assignee.entities).toEqual([
-      { entity: { type: 'CREATOR' }, includeSubs: false },
-    ]);
-  });
-
-  it('✅ 只增不減：算出來 K 比已部署的少 → 保留既有狀態數', () => {
-    const { ok, payload, effectiveK } = buildStatusJson({
-      routeConfig: cfg([{ segmentType: EMP }]), k: 2, existingApprovingCount: 5,
-    });
-
-    expect(ok).toBe(true);
-    expect(effectiveK).toBe(5);
-    expect(payload.states['簽核中(5)']).toBeDefined();
-  });
-
-  it('✅ K 超過上限 10 → 擋下', () => {
-    const { ok, error } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 11 });
-    expect(ok).toBe(false);
-    expect(error).toContain('超過上限 10');
+  it('✅ 終態不設執行者；草稿與駁回掛 CREATOR（申請人要能送出／再申請）', () => {
+    const p = build();
+    expect(p.states[DECIDED].assignee.entities).toEqual([]);
+    expect(p.states[CANCELLED].assignee.entities).toEqual([]);
+    for (const name of [DRAFT, REJECTED]) {
+      expect(p.states[name].assignee.entities).toEqual([
+        { entity: { type: 'CREATOR' }, includeSubs: false },
+      ]);
+    }
   });
 
 });
 
-// ── 動作產生 ────────────────────────────────────────────────────────────────
+// ── 動作 ────────────────────────────────────────────────────────────────────
 
 describe('buildStatusJson — 動作', () => {
 
-  it('✅ 變動深度：每一關兩條同名「核准」，filterCond 互補', () => {
-    const { payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 3 });
-
-    expect(actionSigs(payload, '核准')).toEqual([
-      '簽核中(1)→簽核中(2)[total_steps > 1]',
-      '簽核中(1)→核准[total_steps <= 1]',
-      '簽核中(2)→簽核中(3)[total_steps > 2]',
-      '簽核中(2)→核准[total_steps <= 2]',
-      '簽核中(3)→核准[]',   // 最後一關只有一條出路，不需要條件
+  it('🔑 同意：三個簽核狀態各自可去三個簽核狀態或核決，含自迴圈', () => {
+    const p = build();
+    expect(sigs(p, '同意')).toEqual([
+      '簽核中→簽核中[next_state in ("簽核中")]',                 // ← 自迴圈，鏈靠它跑完
+      '簽核中→經辦人確認中[next_state in ("經辦人確認中")]',
+      '簽核中→會簽中[next_state in ("會簽中")]',
+      '簽核中→核決[next_state in ("核決")]',
+      '經辦人確認中→簽核中[next_state in ("簽核中")]',
+      '經辦人確認中→經辦人確認中[next_state in ("經辦人確認中")]',
+      '經辦人確認中→會簽中[next_state in ("會簽中")]',
+      '經辦人確認中→核決[next_state in ("核決")]',
+      '會簽中→簽核中[next_state in ("簽核中")]',
+      '會簽中→經辦人確認中[next_state in ("經辦人確認中")]',
+      '會簽中→會簽中[next_state in ("會簽中")]',
+      '會簽中→核決[next_state in ("核決")]',
     ]);
   });
 
-  it('✅ 送出／再申請各一條', () => {
-    const { payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 2 });
-    expect(actionSigs(payload, '送出')).toEqual(['草稿→簽核中(1)[]']);
-    expect(actionSigs(payload, '再申請')).toEqual(['駁回→草稿[]']);
-  });
-
-  it('✅ 駁回＝退回申請人：每一關都回駁回狀態', () => {
-    const { payload } = buildStatusJson({
-      routeConfig: cfg([{ segmentType: EMP }], { rejectTarget: '退回申請人' }), k: 3,
-    });
-    expect(actionSigs(payload, '駁回')).toEqual([
-      '簽核中(1)→駁回[]', '簽核中(2)→駁回[]', '簽核中(3)→駁回[]',
+  it('✅ 送出：草稿 → 第 1 關所在的狀態（三種可能，由 next_state 分流）', () => {
+    expect(sigs(build(), '送出')).toEqual([
+      '草稿→簽核中[next_state in ("簽核中")]',
+      '草稿→經辦人確認中[next_state in ("經辦人確認中")]',
+      '草稿→會簽中[next_state in ("會簽中")]',
     ]);
   });
 
-  it('✅ 駁回＝退回上一關：第 1 關沒有上一關，仍回駁回狀態', () => {
-    const { payload } = buildStatusJson({
-      routeConfig: cfg([{ segmentType: EMP }], { rejectTarget: '退回上一關' }), k: 3,
-    });
-    expect(actionSigs(payload, '駁回')).toEqual([
-      '簽核中(1)→駁回[]',        // 上一關就是申請人本人
-      '簽核中(2)→簽核中(1)[]',
-      '簽核中(3)→簽核中(2)[]',
-    ]);
+  it('✅ 駁回：看 reject_state，支援退回申請人與退回上一關兩種', () => {
+    const p = build();
+    const r = sigs(p, '駁回');
+    expect(r).toHaveLength(12); // 3 個來源 × 4 個去向
+    expect(r).toContain('簽核中→駁回[reject_state in ("駁回")]');
+    expect(r).toContain('經辦人確認中→簽核中[reject_state in ("簽核中")]'); // 退回上一關
+  });
+
+  it('✅ 再申請：駁回 → 草稿', () => {
+    expect(sigs(build(), '再申請')).toEqual(['駁回→草稿[]']);
   });
 
   it('✅ 作廢掛在每個非終態，SECONDARY，限定群組', () => {
-    const rc = cfg([{ segmentType: EMP }]);
-    rc.cancel_groups.value = [{ code: 'g_admin' }];
-    const { payload } = buildStatusJson({ routeConfig: rc, k: 2 });
-
-    const cancels = payload.actions.filter((a) => a.name === '作廢');
-    expect(cancels.map((a) => a.from)).toEqual(['草稿', '簽核中(1)', '簽核中(2)', '駁回']);
+    const p = build({ cancelGroups: [{ code: 'g_admin' }] });
+    const cancels = p.actions.filter((a) => a.name === '作廢');
+    expect(cancels.map((a) => a.from)).toEqual([DRAFT, APPROVING, HANDLER, COSIGNING, REJECTED]);
     expect(cancels.every((a) => a.type === 'SECONDARY')).toBe(true);
     expect(cancels[0].executableUser).toEqual({
       entities: [{ entity: { type: 'GROUP', code: 'g_admin' }, includeSubs: false }],
@@ -151,67 +127,37 @@ describe('buildStatusJson — 動作', () => {
   });
 
   it('✅ 沒設作廢群組 → 不帶 executableUser（沿用該狀態的執行者）', () => {
-    const { payload } = buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 1 });
-    const cancel = payload.actions.find((a) => a.name === '作廢');
-    expect(cancel.executableUser).toBeUndefined();
+    expect(build().actions.find((a) => a.name === '作廢').executableUser).toBeUndefined();
+  });
+
+  it('✅ 簽核者只看到「同意」與「駁回」兩種按鈕', () => {
+    const p = build();
+    const fromApproving = new Set(
+      p.actions.filter((a) => a.from === APPROVING && a.type === 'PRIMARY').map((a) => a.name)
+    );
+    expect([...fromApproving].sort()).toEqual(['同意', '駁回']);
   });
 
 });
 
-// ── 全員會簽的位置判定（docs/06 §5.4）────────────────────────────────────────
+// ── 常數性：狀態圖與路由無關 ────────────────────────────────────────────────
 
-describe('resolveAllSigningPositions', () => {
+describe('狀態圖是常數', () => {
 
-  it('✅ 純職能路由：第 2 段全員會簽 → 位置固定，ALL 生效', () => {
-    const rc = cfg([
-      { segmentType: FIX, roleId: 'ROLE_ACC' },
-      { segmentType: FIX, roleId: 'ROLE_GA', stepSigningMode: ALL },
-    ]);
-    const { ok, allPositions } = resolveAllSigningPositions(rc.route_steps.value);
-
-    expect(ok).toBe(true);
-    expect([...allPositions]).toEqual([2]);
+  it('🔑 兩張表單只要作廢群組相同，狀態圖逐字元相同', () => {
+    expect(JSON.stringify(build())).toBe(JSON.stringify(build()));
   });
 
-  it('🚫 全員會簽排在員工鏈段之後 → 位置浮動，擋下並說明原因', () => {
-    const rc = cfg([
-      { segmentType: EMP, stopAtTitleLevel: '部長' },
-      { segmentType: FIX, roleId: 'ROLE_ACC', stepSigningMode: ALL },
-    ]);
-    const { ok, error } = resolveAllSigningPositions(rc.route_steps.value);
-
-    expect(ok).toBe(false);
-    expect(error).toContain('因申請人而異');
+  it('✅ 只有作廢群組會讓產出不同', () => {
+    const a = build({ cancelGroups: [{ code: 'g_a' }] });
+    const b = build({ cancelGroups: [{ code: 'g_b' }] });
+    expect(JSON.stringify(a)).not.toBe(JSON.stringify(b));
+    // 差異只在作廢動作，狀態完全一樣
+    expect(JSON.stringify(a.states)).toBe(JSON.stringify(b.states));
   });
 
-  it('🚫 員工鏈段自己指定全員會簽 → 擋下', () => {
-    const rc = cfg([{ segmentType: EMP, stepSigningMode: ALL }]);
-    const { ok, error } = resolveAllSigningPositions(rc.route_steps.value);
-
-    expect(ok).toBe(false);
-    expect(error).toContain('僅限指定角色段');
-  });
-
-  it('✅ 全員會簽的狀態產生為 ALL，其餘維持 ANY', () => {
-    const rc = cfg([
-      { segmentType: FIX, roleId: 'ROLE_ACC' },
-      { segmentType: FIX, roleId: 'ROLE_GA', stepSigningMode: ALL },
-    ]);
-    const { payload } = buildStatusJson({ routeConfig: rc, k: 2 });
-
-    expect(payload.states['簽核中(1)'].assignee.type).toBe('ANY');
-    expect(payload.states['簽核中(2)'].assignee.type).toBe('ALL');
-  });
-
-  it('🚫 buildStatusJson 會把位置浮動的全員會簽一起擋下', () => {
-    const rc = cfg([
-      { segmentType: EMP },
-      { segmentType: FIX, roleId: 'ROLE_ACC', stepSigningMode: ALL },
-    ]);
-    const { ok, error } = buildStatusJson({ routeConfig: rc, k: 3 });
-
-    expect(ok).toBe(false);
-    expect(error).toContain('全員會簽');
+  it('✅ STATE_ORDER 決定畫面順序，共 7 個', () => {
+    expect(STATE_ORDER).toHaveLength(7);
   });
 
 });
@@ -220,195 +166,97 @@ describe('resolveAllSigningPositions', () => {
 
 describe('validateStatusPayload', () => {
 
-  const goodPayload = () => buildStatusJson({ routeConfig: cfg([{ segmentType: EMP }]), k: 3 }).payload;
-
-  it('✅ 正常產出無錯', () => {
-    expect(validateStatusPayload(goodPayload())).toEqual([]);
+  it('✅ 正常產出無錯（含自迴圈，不該被誤判）', () => {
+    expect(validateStatusPayload(build())).toEqual([]);
+    expect(validateStatusPayload(build({ cancelGroups: [{ code: 'g' }] }))).toEqual([]);
   });
 
   it('✅ from 指向不存在的狀態 → 錯', () => {
-    const p = goodPayload();
-    p.actions.push({ name: '亂搞', from: '不存在的狀態', to: '核准', filterCond: '', type: 'PRIMARY' });
+    const p = build();
+    p.actions.push({ name: '亂搞', from: '不存在的狀態', to: DECIDED, filterCond: '', type: 'PRIMARY' });
     expect(validateStatusPayload(p).join()).toContain('來源狀態「不存在的狀態」不存在');
   });
 
   it('✅ 兩條同名動作都沒有條件 → 錯（按鈕行為不可預期）', () => {
-    const p = goodPayload();
-    p.actions.push({ name: '核准', from: '簽核中(1)', to: '核准', filterCond: '', type: 'PRIMARY' });
-    p.actions.push({ name: '核准', from: '簽核中(1)', to: '作廢', filterCond: '', type: 'PRIMARY' });
+    const p = build();
+    p.actions.push({ name: '同意', from: APPROVING, to: DECIDED, filterCond: '', type: 'PRIMARY' });
+    p.actions.push({ name: '同意', from: APPROVING, to: CANCELLED, filterCond: '', type: 'PRIMARY' });
     expect(validateStatusPayload(p).join()).toContain('沒有條件的同名動作');
   });
 
-  it('✅ 一條有條件一條沒有 → 允許（互補分歧的常見寫法）', () => {
-    const p = goodPayload();
-    p.actions.push({ name: '核准', from: '簽核中(1)', to: '作廢', filterCond: 'total_steps > 99', type: 'PRIMARY' });
-    expect(validateStatusPayload(p)).toEqual([]);
+  it('✅ 同名動作的條件重複 → 錯（兩條會同時成立）', () => {
+    const p = build();
+    p.actions.push({
+      name: '同意', from: APPROVING, to: CANCELLED,
+      filterCond: 'next_state in ("核決")', type: 'PRIMARY',
+    });
+    expect(validateStatusPayload(p).join()).toContain('重複的條件');
   });
 
   it('✅ 非終態沒有出路 → 錯（單子會卡死）', () => {
-    const p = goodPayload();
+    const p = build();
     p.states['孤島'] = { name: '孤島', index: '7', assignee: { type: 'ANY', entities: [] } };
     expect(validateStatusPayload(p).join()).toContain('「孤島」沒有任何出路');
   });
 
   it('✅ 終態有向外的動作 → 錯', () => {
-    const p = goodPayload();
-    p.actions.push({ name: '復活', from: '核准', to: '草稿', filterCond: '', type: 'PRIMARY' });
-    expect(validateStatusPayload(p).join()).toContain('終態「核准」不應該有向外的動作');
+    const p = build();
+    p.actions.push({ name: '復活', from: DECIDED, to: DRAFT, filterCond: '', type: 'PRIMARY' });
+    expect(validateStatusPayload(p).join()).toContain('終態「核決」不應該有向外的動作');
   });
 
   it('✅ index 不連續 → 錯', () => {
-    const p = goodPayload();
-    p.states['草稿'].index = '9';
+    const p = build();
+    p.states[DRAFT].index = '9';
     expect(validateStatusPayload(p).join()).toContain('index 不連續');
-  });
-
-  it('✅ 來源與目標相同 → 錯', () => {
-    const p = goodPayload();
-    p.actions.push({ name: '原地打轉', from: '簽核中(1)', to: '簽核中(1)', filterCond: '', type: 'PRIMARY' });
-    expect(validateStatusPayload(p).join()).toContain('來源與目標都是');
   });
 
 });
 
 // ── 部署指紋 ────────────────────────────────────────────────────────────────
 
-describe('hashRouteConfig', () => {
+describe('hashStatusPayload', () => {
 
-  it('✅ 相同設定 → 相同雜湊', () => {
-    const a = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-    const b = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-    expect(hashRouteConfig(a, 3)).toBe(hashRouteConfig(b, 3));
+  it('✅ 相同狀態圖 → 相同雜湊', () => {
+    expect(hashStatusPayload(build())).toBe(hashStatusPayload(build()));
   });
 
-  it('✅ 改了截止職稱 → 雜湊變（偵測「路由改了忘記重部署」）', () => {
-    const a = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-    const b = cfg([{ segmentType: EMP, stopAtTitleLevel: '次長' }]);
-    expect(hashRouteConfig(a, 3)).not.toBe(hashRouteConfig(b, 3));
+  it('✅ 作廢群組不同 → 雜湊不同', () => {
+    expect(hashStatusPayload(build({ cancelGroups: [{ code: 'g_a' }] })))
+      .not.toBe(hashStatusPayload(build({ cancelGroups: [{ code: 'g_b' }] })));
   });
 
-  it('✅ K 變了 → 雜湊變', () => {
-    const a = cfg([{ segmentType: EMP }]);
-    expect(hashRouteConfig(a, 3)).not.toBe(hashRouteConfig(a, 4));
-  });
-
-  it('✅ 跳過職稱的陣列順序不影響雜湊（複選欄位順序不穩定）', () => {
-    const a = cfg([{ segmentType: EMP, skipTitleLevels: ['次長', '課長'] }]);
-    const b = cfg([{ segmentType: EMP, skipTitleLevels: ['課長', '次長'] }]);
-    expect(hashRouteConfig(a, 3)).toBe(hashRouteConfig(b, 3));
-  });
-
-  it('✅ 只改表單名稱 → 雜湊不變（不影響狀態圖）', () => {
-    const a = cfg([{ segmentType: EMP }]);
-    const b = cfg([{ segmentType: EMP }], { formName: '換個名字' });
-    expect(hashRouteConfig(a, 3)).toBe(hashRouteConfig(b, 3));
+  it('✅ 模板改了 → 雜湊變（偵測「模板改版但這個 App 沒重新部署」）', () => {
+    const p = build();
+    const before = hashStatusPayload(p);
+    p.actions.push({ name: '新動作', from: APPROVING, to: DECIDED, filterCond: 'x', type: 'PRIMARY' });
+    expect(hashStatusPayload(p)).not.toBe(before);
   });
 
   it('✅ 輸出 8 碼十六進位', () => {
-    expect(hashRouteConfig(cfg([{ segmentType: EMP }]), 3)).toMatch(/^[0-9a-f]{8}$/);
+    expect(hashStatusPayload(build())).toMatch(/^[0-9a-f]{8}$/);
   });
 
 });
 
-// ── countApprovingStates ────────────────────────────────────────────────────
+// ── 舊編號狀態偵測 ──────────────────────────────────────────────────────────
 
-describe('countApprovingStates', () => {
+describe('findLegacyNumberedStates', () => {
 
-  it('✅ 數出連續的簽核中(n)', () => {
-    const states = { 草稿: {}, '簽核中(1)': {}, '簽核中(2)': {}, '簽核中(3)': {}, 核准: {} };
-    expect(countApprovingStates(states)).toBe(3);
+  it('🔑 掃出舊模型殘留的「簽核中(n)」——它們在新模板不存在，部署等同要刪掉', () => {
+    const states = {
+      草稿: {}, '簽核中(1)': {}, '簽核中(2)': {}, 核准: {},
+    };
+    expect(findLegacyNumberedStates(states)).toEqual(['簽核中(1)', '簽核中(2)']);
   });
 
-  it('✅ 沒有簽核狀態（全新 App）→ 0', () => {
-    expect(countApprovingStates({ 未処理: {} })).toBe(0);
-    expect(countApprovingStates(undefined)).toBe(0);
+  it('✅ 新模板的「簽核中」不會被誤判', () => {
+    expect(findLegacyNumberedStates(build().states)).toEqual([]);
   });
 
-});
-
-// ── K 值計算 ────────────────────────────────────────────────────────────────
-
-describe('computeMaxDepth', () => {
-
-  it('✅ 純職能路由：直接數關卡，不查 686', async () => {
-    const rc = cfg([
-      { segmentType: FIX, roleId: 'ROLE_ACC' },
-      { segmentType: FIX, roleId: 'ROLE_GA' },
-    ]);
-
-    const { ok, k } = await computeMaxDepth(rc);
-
-    expect(ok).toBe(true);
-    expect(k).toBe(2);
-    expect(getDistinctEntryRoleIds).not.toHaveBeenCalled();
-  });
-
-  it('✅ 有員工鏈段：取所有 distinct 起點展開後的最大值', async () => {
-    // P1 職員起步走到部長＝4 關；P3 次長起步＝2 關 → K 應為 4
-    getDistinctEntryRoleIds.mockResolvedValue(['ROLE_P1', 'ROLE_P3']);
-    const rc = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-
-    const { ok, k } = await computeMaxDepth(rc);
-
-    expect(ok).toBe(true);
-    expect(k).toBe(4);
-    expect(getEntryRoleId).not.toHaveBeenCalled(); // 給定 entryRoleId 就不該再查 686 單筆
-  });
-
-  it('✅ 個別起點展開失敗不中斷，收集起來回報', async () => {
-    getDistinctEntryRoleIds.mockResolvedValue(['ROLE_P1', 'ROLE_GHOST']);
-    const rc = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-
-    const { ok, k, skipped } = await computeMaxDepth(rc);
-
-    expect(ok).toBe(true);
-    expect(k).toBe(4);
-    expect(skipped).toHaveLength(1);
-    expect(skipped[0]).toContain('ROLE_GHOST');
-  });
-
-  it('✅ 全部起點都失敗 → ok=false，要求先修資料', async () => {
-    getDistinctEntryRoleIds.mockResolvedValue(['ROLE_GHOST']);
-    const rc = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-
-    const { ok, error } = await computeMaxDepth(rc);
-
-    expect(ok).toBe(false);
-    expect(error).toContain('健康檢查');
-  });
-
-  it('✅ 686 沒有任何啟用中起點 → ok=false', async () => {
-    getDistinctEntryRoleIds.mockResolvedValue([]);
-    const rc = cfg([{ segmentType: EMP, stopAtTitleLevel: '部長' }]);
-
-    const { ok, error } = await computeMaxDepth(rc);
-
-    expect(ok).toBe(false);
-    expect(error).toContain('沒有任何啟用中的起點角色');
-  });
-
-});
-
-// ── 端到端：路由 → 狀態圖 ───────────────────────────────────────────────────
-
-describe('端到端', () => {
-
-  it('✅ 「員工鏈段到部長 + 會計經辦」→ K=5 的完整狀態圖且通過驗證', async () => {
-    getDistinctEntryRoleIds.mockResolvedValue(['ROLE_P1', 'ROLE_P3']);
-    const rc = cfg([
-      { segmentType: EMP, stopAtTitleLevel: '部長' },
-      { segmentType: FIX, roleId: 'ROLE_ACC' },
-    ]);
-
-    const { ok, k } = await computeMaxDepth(rc);
-    expect(ok).toBe(true);
-    expect(k).toBe(5); // 職員→課長→次長→部長→會計經辦
-
-    const built = buildStatusJson({ routeConfig: rc, k });
-    expect(built.ok).toBe(true);
-    expect(validateStatusPayload(built.payload)).toEqual([]);
-    expect(Object.keys(built.payload.states)).toContain(TPL.approving(5));
-    expect(built.payload.states[TPL.approving(6)]).toBeUndefined();
+  it('✅ 空的／未定義都回空陣列', () => {
+    expect(findLegacyNumberedStates({})).toEqual([]);
+    expect(findLegacyNumberedStates(undefined)).toEqual([]);
   });
 
 });

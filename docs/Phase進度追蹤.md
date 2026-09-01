@@ -9,7 +9,7 @@
 - **當前 Phase**:**P8 Phase A～D 程式碼全部完成，待 kintone 端端到端實測**
 - **最後更新**:2026-09-01
 - **git**:全部已 commit，工作區乾淨
-- **測試**:`npm test` → **234 項全過**（8 檔）
+- **測試**:`npm test` → **231 項全過**（8 檔）
 
 ### 2026-09-01 全盤分析 + 段接續修正
 
@@ -41,19 +41,31 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 
 **Phase C／D 也已完成**（2026-09-01 同日）：`tools/10-status-generator.js`（產生器）、
 `adapters/00-standard-adapter.js`（標準 adapter）、`core/01` 的 `STATUS_TEMPLATE`。
+
+**狀態模型於同日改版**（Jimmy 需求 + 他實機確認 kintone 允許動作自迴圈）：
+`簽核中(1..K)` 編號 → **固定 7 狀態**（草稿／簽核中／經辦人確認中／會簽中／駁回／核決／作廢），
+每個申請 App 的流程設定逐字元相同、關卡數不影響狀態圖。詳見 `docs/06` v2.0、對話脈絡 §9.14。
+
 **P8 的程式碼到此全部寫完，剩下的都在 kintone 端。**
+
+⚠️ **App 736 要新增兩個欄位嗎？不用**——改版動到的是「申請 App 的規約欄位」
+（新增 `next_state` / `reject_state`）與 `approver_chain` 子表格（新增 `step_state`），
+736 本身的 schema 不變（`max_depth` 留著但不再使用）。
 
 **待辦（都在 kintone 端，換機後可繼續）：**
 1. 上傳 736：`core/01,05,04,02,03,06,07` + `apps/form-route/01-route-form.js` + `tools/10-status-generator.js`
    → 手動驗（列增刪重掛 picker、選角色寫得進 `role_id`、切段類型會淡化、submit 擋錯、職稱不同步會警告）
-2. **產生器冒煙測試**（優先做，5 分鐘）：拿測試 App 跑一次「產生流程設定」（K 會很小），
-   到「表單設定 → 流程管理」確認「簽核中(1)」上**只有一顆「核准」按鈕**。
-   → 這是 docs/06 §5.2 唯一無法從官方文件百分之百確認的一點（同名動作）。
-   若變成兩顆，把 `tools/10` 的 `ACT.APPROVE` 拆成兩個名字即可（UX 差一點，功能相同）。
+2. **產生器冒煙測試**（優先做）：拿測試 App 按「部署流程設定」，到「表單設定 → 流程管理」確認：
+   - 7 個狀態：草稿／簽核中／經辦人確認中／會簽中／駁回／核決／作廢
+   - 「簽核中」上**只有一顆「同意」、一顆「駁回」**（12 條同名動作靠 filterCond 分流，
+     若變成多顆按鈕，代表 kintone 不接受同一 from 的同名動作 → 回報我改設計）
+   - 「簽核中 → 簽核中」的自迴圈動作確實存在（你已實測可設定，這裡確認 API 寫得進去）
 3. 重上 685：`core/01~07` + 既有 7 支 → `03` 下拉手動回歸（選取／亂打還原／切換後 Timeline 刷新）
 4. 測試 App 實測「更新執行者 API」：狀態已設執行者時 `PUT /k/v1/record/assignees` 帶 revision 換人 → 該人能執行動作
-5. 端到端：全新測試表單埋 4 個規約欄位 + 掛 adapter → 三種路由 × 兩種鏈深度；
-   在途單改 685 的 `holder_user` 確認跑到該關拿到新的人
+5. 端到端：全新測試表單埋 **6 個規約欄位** + `approver_chain` 子表格（含新增的 `step_state`）
+   + 掛 adapter → 三種路由 × 兩種鏈深度；在途單改 685 的 `holder_user` 確認跑到該關拿到新的人
+   - 重點驗：5 關的鏈能在「簽核中」上自迴圈跑完、經辦關卡會切到「經辦人確認中」、
+     全員會簽關卡會切到「會簽中」且要所有人簽完才前進
 6. P2 舊待辦：core 3 支 + `apps/employee-entry` 2 支 + `tools/05` 上傳 686 測試（與 P8 不互相阻塞）
 
 **一個待你決定的設計點：**
@@ -464,6 +476,7 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 | **P8 Phase A** | **2026-08-31** | 引擎前置修復 4 項（docs/05 #1#2#3#4）完成，91 項測試全過 |
 | **P8 Phase B a/b/c** | **2026-08-31** | ROUTE 欄位代碼、`getRouteConfig` 全量快取、`core/06-route-engine.js` `buildChainForForm`；`walkSegment`/`finalizeChain` 由 03 抽出共用；120 項測試全過。剩 d（表單 UI）卡 App 736 掛載 |
 | **P8 執行者機制定案** | **2026-08-31** | 基石假設否決：proceed 直寫欄位不穩（已知行為），執行者改用「更新執行者 API」`PUT /k/v1/record/assignees` 為權威 + `detail.show` 安全網；docs/06 升 1.2、docs/02 與對話脈絡 §9.8 同步 |
+| **P8 狀態模型改版** | **2026-09-01** | Jimmy 要求「所有 App 統一狀態、不寫死」→ `簽核中(1..K)` 編號改為固定 7 狀態 + 自迴圈（他實機確認 kintone 允許動作自迴圈，推翻了社群說法）。K 的概念整個消失：刪掉 `computeMaxDepth`／`getDistinctEntryRoleIds`／只增不減／全員會簽位置判定。新增 `next_state`／`reject_state`／`step_state` 三欄與 `會簽中` 狀態。docs/06 升 2.0。231 項測試全過 |
 | **P8 Phase D** | **2026-09-01** | 標準 adapter：submit 重算鏈 + max_depth 擋關、proceed 依 nextStatus 推進（全員會簽會在狀態不變時觸發，不能用 current_step+1）、detail.show 用更新執行者 API 補正。`STATUS_TEMPLATE` 移入 config 供產生器與 adapter 共用。docs/06 升 1.4。234 項測試全過 |
 | **P8 Phase C** | **2026-09-01** | status.json 產生器：`tools/10-status-generator.js` + `expandRouteSegments` 抽出 + `getDistinctEntryRoleIds`。實作前查證推翻三項推測（`ANY` vs `ONE`、`FIELD_ENTITY` vs `CUSTOM_FIELD`、只增不減），docs/06 升 1.3。202 項測試全過。剩 736 上傳實測整條管線 |
 | **P8 段接續修正** | **2026-09-01** | 全盤分析掃出兩個真 bug：續段第一關被「主管送單不用簽自己」規則誤吃（`walkSegment` 補 `isEntrySegment`）、續段接在終點後誤報循環（`personalCursor` 改三態）；順帶補 `step_no` 混填／重複驗證。158 項測試全過 |

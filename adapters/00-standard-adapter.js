@@ -1,37 +1,47 @@
 /**
  * 標準 adapter（P8 Phase D）— 一支 JS 掛在所有申請 App 上
  *
- * 新表單接入 = 建一筆 form_route_config + 埋 4 個規約欄位 + 掛這支 + 跑一次產生器。
+ * 新表單接入 = 建一筆 form_route_config + 埋 6 個規約欄位 + 掛這支 + 跑一次部署。
  * 本檔完全不認得任何特定表單：走哪條鏈由路由表決定，簽核者是誰由角色表決定。
  *
  * 【三個掛載點】
- *   1. submit      在「草稿」重算簽核鏈，寫入子表格 + total_steps + current_approvers
- *   2. process.proceed  依 nextStatus 推進 current_step、best-effort 寫下一關執行者
+ *   1. submit           在「草稿」重算簽核鏈，寫入子表格與四個指標欄位
+ *   2. process.proceed  推進 current_step、算出下一站、best-effort 寫執行者
  *   3. detail.show      安全網：實際執行者與應簽的人不一致時，用「更新執行者 API」補正
  *
  * 【影響的欄位】（每個申請 App 都要埋，見 Config.ADAPTER_FIELDS）
- *   - approver_chain    子表格：簽核鏈快照（含 expected_signers / signing_mode / signed_by）
+ *   - approver_chain    子表格：簽核鏈快照（含 expected_signers / signing_mode / step_state / signed_by）
  *   - current_approvers 使用者選擇（多選）：目前這關該簽的人。原生流程「指定欄位」的來源
  *   - current_step      數值：目前第幾關。0＝尚未進入簽核（草稿／駁回）
- *   - total_steps       數值：鏈總長，供狀態轉移的 filterCond 分流（docs/06 §5.2）
+ *   - total_steps       數值：鏈總長，顯示「第 3 / 5 關」用
+ *   - next_state        文字：按下「同意」之後要去哪個狀態 ← 狀態轉移的 filterCond 讀它
+ *   - reject_state      文字：按下「駁回」之後要去哪個狀態 ← 同上
+ *
+ * 【為什麼需要 next_state / reject_state】
+ * 狀態不再編號（固定 7 個，靠自迴圈跑完任意長度的鏈），所以光看「簽核中」
+ * 無從得知下一站是主管、經辦、會簽還是已簽完。由 adapter 先算好寫進欄位，
+ * kintone 的 filterCond 讀它決定往哪走。
  *
  * 【依賴】
- *   - core/01-config.js（Config：ADAPTER_FIELDS / CHAIN_FIELDS / STATUS_TEMPLATE / ACTION_TEMPLATE）
- *   - core/02-api-client.js（ApiClient：getRole / getRouteConfig）
- *   - core/03-chain-builder.js（Engine：resolveHolders）
+ *   - core/01-config.js（Config）
+ *   - core/02-api-client.js（ApiClient.getRole）
+ *   - core/03-chain-builder.js（Engine.resolveHolders）
  *   - core/04-utils.js（Utils）
  *   - core/06-route-engine.js（buildChainForForm）
  *
  * 【兩個查證過、會決定行為對錯的 kintone 事實】
  *   1. **全員會簽時 proceed 會在狀態不變的情況下觸發**（每個人按一次都觸發，
- *      直到最後一人才換狀態）。所以推進 current_step 必須由 `event.nextStatus` 決定，
- *      不能看「動作被觸發了」——後者會讓會簽關卡每有一人簽名就跳一關。
+ *      直到最後一人才換狀態）。而自迴圈讓「狀態不變」也可能是正常推進，
+ *      兩者無法用狀態分辨 → 改用「簽名是否已覆蓋所有執行者」判定，見 isFinalSignature。
  *   2. **執行者＝「指定欄位」時，kintone 用「按鈕按下前」的欄位值解析執行者**。
  *      所以 proceed 內寫 current_approvers 是 best-effort，權威機制是
  *      `PUT /k/v1/record/assignees`（detail.show 安全網呼叫）。詳見 docs/06 §5.3。
  *
  * 【變更履歷】
- *   2026-09-01  Jimmy/Claude  初版（P8 Phase D）
+ *   2026-09-01  Jimmy/Claude  初版（P8 Phase D，簽核中(1..K) 編號模型）
+ *   2026-09-01  Jimmy/Claude  改為固定狀態 + 自迴圈模型：current_step 成為唯一的關卡真相
+ *                              （狀態名不再帶關卡序），新增 next_state / reject_state 兩個
+ *                              給 filterCond 讀的欄位，會簽完成與否改用 signed_by 覆蓋率判定
  */
 (() => {
   'use strict';
@@ -40,8 +50,11 @@
     ADAPTER_FIELDS: AF,
     CHAIN_FIELDS: CF,
     ROUTE_FIELDS: RTF,
-    STATUS_TEMPLATE: TPL,
+    STATUS_TEMPLATE: ST,
+    APPROVING_STATES,
     ACTION_TEMPLATE: ACT,
+    SIGNING_MODE_OPTIONS: SM,
+    REJECT_TARGET_OPTIONS: RT,
   } = window.ApprovalRouting.Config;
 
   const { getRole, getRouteConfig } = window.ApprovalRouting.ApiClient;
@@ -51,7 +64,7 @@
   const MAX_AUTO_FIX = 2;
 
   // -------------------------------------------------------------------
-  // 純函式：狀態與記錄的解讀（可測，無 I/O）
+  // 純函式：記錄的解讀（可測，無 I/O）
   // -------------------------------------------------------------------
 
   /**
@@ -60,7 +73,7 @@
    * 寫死任何一個都會在別的語言環境靜默失效。
    * @param {Object} record
    * @param {string} type - 'STATUS' | 'STATUS_ASSIGNEE'
-   * @returns {Object|null} 欄位物件
+   * @returns {Object|null}
    */
   const findBuiltIn = (record, type) => {
     for (const key of Object.keys(record ?? {})) {
@@ -73,76 +86,111 @@
   const hasAdapterFields = (record) =>
     Object.values(AF).every((code) => record?.[code] !== undefined);
 
-  /**
-   * 決定 proceed 之後記錄該長什麼樣
-   *
-   * 純函式：把「狀態怎麼變」翻譯成「current_step 與執行者該是什麼」，
-   * 不碰 API、不碰 DOM，所有分支都測得到。
-   *
-   * @param {Object} p
-   * @param {string} p.fromStatus
-   * @param {string} p.toStatus
-   * @param {number} p.currentStep - 記錄上目前的 current_step
-   * @param {number} p.totalSteps
-   * @returns {{
-   *   kind: 'stay'|'advance'|'terminal'|'reset'|'blocked',
-   *   nextStep: number|null,      // 要寫進 current_step 的值；null＝不動
-   *   approverStep: number|null,  // 要解析第幾關的簽核者當執行者；null＝清空
-   *   error: string|null
-   * }}
-   */
-  const planProceed = ({ fromStatus, toStatus, currentStep, totalSteps }) => {
-    // 全員會簽尚未簽完：kintone 會在狀態不變的情況下觸發 proceed。
-    // 這時只記錄簽名，絕不推進——推進了會讓會簽關卡每有一人簽就跳一關。
-    if (fromStatus === toStatus) {
-      return { kind: 'stay', nextStep: null, approverStep: null, error: null };
-    }
+  /** 取子表格第 n 關（1-based）的列 */
+  const chainRow = (record, n) =>
+    (record?.[AF.APPROVER_CHAIN]?.value ?? [])[n - 1] ?? null;
 
-    const fromStep = TPL.parseApproving(fromStatus);
-    const toStep = TPL.parseApproving(toStatus);
+  const chainLength = (record) => (record?.[AF.APPROVER_CHAIN]?.value ?? []).length;
 
-    // 併發防護：兩個「任一人簽」的簽核者同時按核准時，慢的那個記錄上的
-    // current_step 已經被快的那個推走了。currentStep 為 0 視為「還沒被設定過」
-    // （adapter 上線前就存在的舊單），不擋，讓它順勢補上。
-    if (fromStep !== null && currentStep !== 0 && currentStep !== fromStep) {
-      return {
-        kind: 'blocked', nextStep: null, approverStep: null,
-        error: `這張單已經被其他簽核者處理過了（目前在第 ${currentStep} 關，你看到的是第 ${fromStep} 關）。請重新整理頁面確認最新狀態。`,
-      };
-    }
-
-    if (toStep !== null) {
-      return { kind: 'advance', nextStep: toStep, approverStep: toStep, error: null };
-    }
-
-    // 回到草稿（再申請）或被駁回：執行者由狀態設定決定（申請人），欄位清空
-    if (toStatus === TPL.DRAFT || toStatus === TPL.REJECTED) {
-      return { kind: 'reset', nextStep: 0, approverStep: null, error: null };
-    }
-
-    // 終態（核准／作廢）：關卡指標停在最後簽過的那一關，執行者清空
-    return {
-      kind: 'terminal',
-      nextStep: toStatus === TPL.APPROVED ? (totalSteps || fromStep || 0) : (fromStep ?? currentStep),
-      approverStep: null,
-      error: null,
-    };
-  };
-
-  /**
-   * 比較兩組使用者代碼是不是同一組人（順序無關）
-   * @param {string[]} a
-   * @param {string[]} b
-   */
+  /** 比較兩組使用者代碼是不是同一組人（順序無關） */
   const sameMembers = (a, b) => {
     if (a.length !== b.length) return false;
     const s = new Set(a);
     return b.every((c) => s.has(c));
   };
 
-  /** 取子表格第 n 關（1-based）的列 */
-  const chainRow = (record, n) =>
-    (record?.[AF.APPROVER_CHAIN]?.value ?? [])[n - 1] ?? null;
+  /**
+   * 按下「同意」之後要去的狀態：下一關的 step_state，沒有下一關就是「核決」
+   * @param {Object[]} chain - approver_chain 的 value 陣列
+   * @param {number} step - 目前第幾關（1-based）
+   */
+  const nextStateAfter = (chain, step) =>
+    step < chain.length ? (chain[step]?.value?.[CF.STEP_STATE]?.value || ST.APPROVING) : ST.DECIDED;
+
+  /**
+   * 按下「駁回」之後要去的狀態
+   * 退回上一關且已有上一關 → 上一關的 step_state；否則回「駁回」（上一關就是申請人本人）
+   */
+  const rejectStateAt = (chain, step, rejectTarget) => {
+    if (rejectTarget === RT.PREV_STEP && step > 1) {
+      return chain[step - 2]?.value?.[CF.STEP_STATE]?.value || ST.APPROVING;
+    }
+    return ST.REJECTED;
+  };
+
+  /**
+   * 這一次「同意」是不是該關的最後一個簽名
+   *
+   * 自迴圈帶來的歧義：`會簽中 → 會簽中` 可能是「會簽還沒簽完」，也可能是
+   * 「這一關簽完了，而下一關剛好也是會簽」——兩者的狀態轉移一模一樣，
+   * 分辨不了。所以不看狀態，看**簽名是否已覆蓋所有執行者**。
+   *
+   * 任一人簽的關卡永遠是 true（一個人按下去就結束）。
+   *
+   * @param {Object} row - 該關的子表格列
+   * @param {string[]} assignees - 目前記錄上的實際執行者
+   * @param {string} actor - 這次按下按鈕的人
+   */
+  const isFinalSignature = (row, assignees, actor) => {
+    if ((row?.value?.[CF.SIGNING_MODE]?.value || SM.ANY) !== SM.ALL) return true;
+    const signed = new Set((row?.value?.[CF.SIGNED_BY]?.value ?? []).map((u) => u.code));
+    signed.add(actor);
+    // 執行者名單取不到時保守處理：當成還沒簽完，寧可停著也不要跳關
+    if (assignees.length === 0) return false;
+    return assignees.every((code) => signed.has(code));
+  };
+
+  /**
+   * 決定 proceed 之後 current_step 該是多少
+   *
+   * 純函式：把「按了什麼」翻譯成「關卡指標怎麼動」，不碰 API、不碰 DOM。
+   * **不看狀態名**——固定狀態模型下狀態名不帶關卡序，current_step 才是唯一真相。
+   *
+   * @param {Object} p
+   * @param {string} p.action        event.action.value
+   * @param {number} p.currentStep   記錄上目前的 current_step
+   * @param {number} p.chainLen      鏈總長
+   * @param {boolean} p.finalSignature  這次是不是該關的最後一個簽名
+   * @param {string} p.rejectTarget  路由表的 reject_target
+   * @returns {{ kind: 'stay'|'advance'|'reset'|'terminal'|'blocked', nextStep: number, error: string|null }}
+   */
+  const planProceed = ({ action, currentStep, chainLen, finalSignature, rejectTarget }) => {
+    const stay = { kind: 'stay', nextStep: currentStep, error: null };
+
+    if (action === ACT.SUBMIT) {
+      return { kind: 'advance', nextStep: 1, error: null };
+    }
+
+    if (action === ACT.REAPPLY) {
+      return { kind: 'reset', nextStep: 0, error: null };
+    }
+
+    if (action === ACT.CANCEL) {
+      return { kind: 'terminal', nextStep: currentStep, error: null };
+    }
+
+    if (action === ACT.REJECT) {
+      const back = rejectTarget === RT.PREV_STEP && currentStep > 1 ? currentStep - 1 : 0;
+      return { kind: back > 0 ? 'advance' : 'reset', nextStep: back, error: null };
+    }
+
+    if (action === ACT.APPROVE) {
+      if (currentStep < 1 || currentStep > chainLen) {
+        return {
+          kind: 'blocked', nextStep: currentStep,
+          error: `簽核鏈的關卡指標異常（目前 ${currentStep}，鏈長 ${chainLen}）。請重新整理頁面；若持續發生請聯絡 IT。`,
+        };
+      }
+      // 全員會簽尚未簽完：只記簽名，不推進
+      if (!finalSignature) return stay;
+      return currentStep >= chainLen
+        ? { kind: 'terminal', nextStep: chainLen, error: null }
+        : { kind: 'advance', nextStep: currentStep + 1, error: null };
+    }
+
+    // 不認得的動作（各表單自訂的）：不干預
+    return stay;
+  };
 
   // -------------------------------------------------------------------
   // 即時解析
@@ -154,10 +202,6 @@
    * 走角色表即時解析，不用子表格裡的 expected_signers 快照——
    * 「跑到那一關才解析」是本專案存在的理由（見對話脈絡 §二、§四）：
    * IT 改了群組成員、HR 換了角色上的人，在途單跑到那關要拿到新的人。
-   *
-   * @param {Object} record
-   * @param {number} n - 1-based 關卡序
-   * @returns {Promise<{ok: boolean, holders: string[], error: string|null}>}
    */
   const resolveStepApprovers = async (record, n) => {
     const row = chainRow(record, n);
@@ -179,6 +223,16 @@
 
   const toUserValue = (codes) => codes.map((code) => ({ code }));
 
+  /** 取該申請 App 的 reject_target 設定（查不到時預設退回申請人） */
+  const getRejectTarget = async (appId) => {
+    try {
+      const cfg = await getRouteConfig(appId);
+      return cfg?.[RTF.REJECT_TARGET]?.value || RT.APPLICANT;
+    } catch (_) {
+      return RT.APPLICANT;
+    }
+  };
+
   // -------------------------------------------------------------------
   // 1. submit — 在草稿重算簽核鏈
   // -------------------------------------------------------------------
@@ -195,7 +249,7 @@
 
       // 只在草稿重算。已經在跑的單子重算會讓鏈跟已經簽過的關卡對不上
       const status = findBuiltIn(rec, 'STATUS')?.value;
-      if (status && status !== TPL.DRAFT) return event;
+      if (status && status !== ST.DRAFT) return event;
 
       const appId = kintone.app.getId() ?? kintone.mobile.app.getId();
       const applicant = kintone.getLoginUser().code;
@@ -211,34 +265,22 @@
         return event;
       }
 
-      // 鏈比已部署的狀態數還長 → 單子會卡在最後一關出不去。
-      // 這在組織長高之後一定會發生（多一層主管就多一關），擋在送出當下，
-      // 比讓使用者送出後卡住、再回頭查為什麼好得多。
-      const routeConfig = await getRouteConfig(appId);
-      const maxDepth = Number(routeConfig?.[RTF.MAX_DEPTH]?.value || 0);
-      if (maxDepth > 0 && chain.length > maxDepth) {
-        const msg =
-          `這張單需要 ${chain.length} 關簽核，但目前流程只部署到 ${maxDepth} 關，送出後會卡在最後一關。\n` +
-          `請 IT 到表單路由設定表重新執行「產生流程設定」後再送出。`;
-        event.error = msg;
-        await showWarning('簽核關卡數超過已部署的流程', msg);
-        return event;
-      }
-
       rec[AF.APPROVER_CHAIN].value = chain;
       rec[AF.TOTAL_STEPS].value = String(chain.length);
-      // 0＝還沒進簽核。送出動作（草稿→簽核中(1)）才會把它推到 1
+      // 0＝還沒進簽核。送出動作（草稿→第 1 關）才會把它推到 1
       rec[AF.CURRENT_STEP].value = '0';
-      // 先把第 1 關的人放好：kintone 解析「指定欄位」執行者時讀的是按鈕按下**前**
-      // 的欄位值，所以送出鈕按下時這裡必須已經是第 1 關的簽核者
+      // 先把第 1 關的人與去向放好：kintone 解析「指定欄位」執行者、以及動作的 filterCond，
+      // 讀的都是按鈕按下**前**的欄位值，所以送出鈕按下時這些必須已經是第 1 關的內容
       rec[AF.CURRENT_APPROVERS].value = chain[0][CF.EXPECTED_SIGNERS].value;
+      rec[AF.NEXT_STATE].value = chain[0][CF.STEP_STATE].value;
+      rec[AF.REJECT_STATE].value = ST.REJECTED;
 
       return event;
     })
   );
 
   // -------------------------------------------------------------------
-  // 2. process.proceed — 依 nextStatus 推進
+  // 2. process.proceed — 推進關卡指標並算出下一站
   // -------------------------------------------------------------------
 
   kintone.events.on(
@@ -247,12 +289,20 @@
       const rec = event.record;
       if (!hasAdapterFields(rec)) return event;
 
-      const fromStatus = event.status?.value ?? '';
-      const toStatus = event.nextStatus?.value ?? '';
+      const appId = event.appId ?? kintone.app.getId();
+      const action = event.action?.value ?? '';
       const currentStep = Number(rec[AF.CURRENT_STEP]?.value || 0);
-      const totalSteps = Number(rec[AF.TOTAL_STEPS]?.value || 0);
+      const chain = rec[AF.APPROVER_CHAIN]?.value ?? [];
+      const actor = kintone.getLoginUser().code;
+      const assignees = (findBuiltIn(rec, 'STATUS_ASSIGNEE')?.value ?? []).map((u) => u.code);
 
-      const plan = planProceed({ fromStatus, toStatus, currentStep, totalSteps });
+      const row = chainRow(rec, currentStep);
+      const finalSignature = action === ACT.APPROVE ? isFinalSignature(row, assignees, actor) : true;
+
+      const rejectTarget = await getRejectTarget(appId);
+      const plan = planProceed({
+        action, currentStep, chainLen: chain.length, finalSignature, rejectTarget,
+      });
 
       if (plan.kind === 'blocked') {
         event.error = plan.error;
@@ -260,36 +310,36 @@
       }
 
       // 記下是誰簽的。全員會簽時每個人各觸發一次 proceed，這裡會逐一累加
-      if (event.action?.value === ACT.APPROVE) {
-        const signedStep = TPL.parseApproving(fromStatus);
-        const row = signedStep === null ? null : chainRow(rec, signedStep);
-        if (row?.value?.[CF.SIGNED_BY]) {
-          const actor = kintone.getLoginUser().code;
-          const already = (row.value[CF.SIGNED_BY].value ?? []).map((u) => u.code);
-          if (!already.includes(actor)) {
-            row.value[CF.SIGNED_BY].value = toUserValue([...already, actor]);
-          }
-          row.value[CF.SIGNED_AT].value = new Date().toISOString();
+      if (action === ACT.APPROVE && row?.value?.[CF.SIGNED_BY]) {
+        const already = (row.value[CF.SIGNED_BY].value ?? []).map((u) => u.code);
+        if (!already.includes(actor)) {
+          row.value[CF.SIGNED_BY].value = toUserValue([...already, actor]);
         }
+        row.value[CF.SIGNED_AT].value = new Date().toISOString();
       }
 
-      // 全員會簽尚未簽完：只留簽名，不推進
+      // 會簽未完成：只留簽名，指標與去向都不動
       if (plan.kind === 'stay') return event;
 
-      if (plan.nextStep !== null) rec[AF.CURRENT_STEP].value = String(plan.nextStep);
+      rec[AF.CURRENT_STEP].value = String(plan.nextStep);
 
-      if (plan.approverStep === null) {
+      // 終態（核決／作廢）或退出簽核（駁回到申請人／再申請）：沒有下一關要指
+      if (plan.kind === 'terminal' || plan.nextStep < 1) {
         rec[AF.CURRENT_APPROVERS].value = [];
+        rec[AF.NEXT_STATE].value = '';
+        rec[AF.REJECT_STATE].value = ST.REJECTED;
         return event;
       }
 
-      // best-effort：多數情況這個寫入會被採用；被吃掉時由 detail.show 安全網補正
-      const resolved = await resolveStepApprovers(rec, plan.approverStep);
+      // 寫下一關的執行者與去向。best-effort：被吃掉時由 detail.show 安全網補正
+      const resolved = await resolveStepApprovers(rec, plan.nextStep);
       if (!resolved.ok) {
         event.error = `無法決定下一關的簽核者：${resolved.error}`;
         return event;
       }
       rec[AF.CURRENT_APPROVERS].value = toUserValue(resolved.holders);
+      rec[AF.NEXT_STATE].value = nextStateAfter(chain, plan.nextStep);
+      rec[AF.REJECT_STATE].value = rejectStateAt(chain, plan.nextStep, rejectTarget);
 
       return event;
     })
@@ -299,7 +349,6 @@
   // 3. detail.show — 安全網：用「更新執行者 API」補正
   // -------------------------------------------------------------------
 
-  /** 這筆記錄這輪已經自動補正幾次（跨頁面重整用 sessionStorage 記） */
   const fixCountKey = (appId, recordId) => `ar-assignee-fix-${appId}-${recordId}`;
 
   const bumpFixCount = (appId, recordId) => {
@@ -317,79 +366,8 @@
     try { sessionStorage.removeItem(fixCountKey(appId, recordId)); } catch (_) { /* 忽略 */ }
   };
 
-  kintone.events.on(
-    ['app.record.detail.show', 'mobile.app.record.detail.show'],
-    safeHandler(async (event) => {
-      const rec = event.record;
-      if (!hasAdapterFields(rec)) return event;
-
-      const appId = event.appId ?? kintone.app.getId();
-      const recordId = rec.$id?.value;
-
-      const status = findBuiltIn(rec, 'STATUS')?.value;
-      const step = TPL.parseApproving(status);
-      if (step === null) {
-        // 不在簽核中（草稿／核准／駁回／作廢）→ 沒有要補正的執行者
-        clearFixCount(appId, recordId);
-        return event;
-      }
-
-      const assigneeField = findBuiltIn(rec, 'STATUS_ASSIGNEE');
-      const actual = (assigneeField?.value ?? []).map((u) => u.code);
-
-      const resolved = await resolveStepApprovers(rec, step);
-      if (!resolved.ok) {
-        console.warn('[ApprovalRouting] 安全網無法解析執行者：', resolved.error);
-        return event;
-      }
-
-      if (sameMembers(actual, resolved.holders)) {
-        clearFixCount(appId, recordId); // 一致就重置計數，之後真的出問題還有額度
-        return event;
-      }
-
-      const tries = bumpFixCount(appId, recordId);
-      if (tries > MAX_AUTO_FIX) {
-        console.warn('[ApprovalRouting] 執行者補正已連續失敗，停止自動補正以免無限重整。');
-        await showWarning(
-          '這張單的執行者可能不正確',
-          `系統偵測到目前的執行者與應簽的人不一致，自動補正沒有成功。\n` +
-          `應簽：${resolved.holders.join('、')}\n請聯絡 IT 協助。`
-        );
-        return event;
-      }
-
-      // 帶 revision：兩個「任一人簽」的簽核者同時開頁面時，只有一個會成功，
-      // 另一個拿到衝突就重讀重試一次
-      const fixed = await updateAssigneesWithRetry(appId, recordId, resolved.holders, rec.$revision?.value);
-      if (!fixed.ok) {
-        console.warn('[ApprovalRouting] 更新執行者 API 失敗：', fixed.error);
-        return event;
-      }
-
-      // 欄位鏡像同步（顯示用 + 原生流程的 fallback 來源）
-      try {
-        await kintoneApi('/k/v1/record', 'PUT', {
-          app: appId, id: recordId,
-          record: { [AF.CURRENT_APPROVERS]: { value: toUserValue(resolved.holders) } },
-        });
-      } catch (err) {
-        console.warn('[ApprovalRouting] current_approvers 鏡像同步失敗（執行者本身已更新）：', err?.message || err);
-      }
-
-      // 執行者是在頁面載入時由伺服器算出來的，不重整的話正確的人看不到按鈕。
-      // 補正成功後下一次載入會比對一致、不再重整，天然收斂。
-      location.reload();
-      return event;
-    })
-  );
-
   /**
    * 呼叫更新執行者 API，revision 衝突時重讀重試一次
-   * @param {number|string} appId
-   * @param {string} recordId
-   * @param {string[]} assignees
-   * @param {string} revision
    */
   const updateAssigneesWithRetry = async (appId, recordId, assignees, revision) => {
     const call = (rev) =>
@@ -403,7 +381,6 @@
       return { ok: true, error: null };
     } catch (err) {
       try {
-        // 重讀最新 revision 再試一次；第二次仍失敗就放棄，交給下一次載入
         const fresh = await kintoneApi('/k/v1/record', 'GET', { app: appId, id: recordId });
         await call(fresh.record?.$revision?.value);
         return { ok: true, error: null };
@@ -413,10 +390,93 @@
     }
   };
 
+  kintone.events.on(
+    ['app.record.detail.show', 'mobile.app.record.detail.show'],
+    safeHandler(async (event) => {
+      const rec = event.record;
+      if (!hasAdapterFields(rec)) return event;
+
+      const appId = event.appId ?? kintone.app.getId();
+      const recordId = rec.$id?.value;
+
+      const status = findBuiltIn(rec, 'STATUS')?.value;
+      const step = Number(rec[AF.CURRENT_STEP]?.value || 0);
+
+      // 不在簽核狀態（草稿／駁回／核決／作廢）→ 沒有要補正的執行者
+      if (!APPROVING_STATES.includes(status) || step < 1 || step > chainLength(rec)) {
+        clearFixCount(appId, recordId);
+        return event;
+      }
+
+      const actual = (findBuiltIn(rec, 'STATUS_ASSIGNEE')?.value ?? []).map((u) => u.code);
+
+      const resolved = await resolveStepApprovers(rec, step);
+      if (!resolved.ok) {
+        console.warn('[ApprovalRouting] 安全網無法解析執行者：', resolved.error);
+        return event;
+      }
+
+      // 順便檢查兩個給 filterCond 讀的欄位——它們錯了，按下按鈕會走到錯的狀態
+      const chain = rec[AF.APPROVER_CHAIN].value;
+      const rejectTarget = await getRejectTarget(appId);
+      const wantNext = nextStateAfter(chain, step);
+      const wantReject = rejectStateAt(chain, step, rejectTarget);
+      const routingStale =
+        rec[AF.NEXT_STATE].value !== wantNext || rec[AF.REJECT_STATE].value !== wantReject;
+
+      if (sameMembers(actual, resolved.holders) && !routingStale) {
+        clearFixCount(appId, recordId); // 一致就重置計數，之後真的出問題還有額度
+        return event;
+      }
+
+      const tries = bumpFixCount(appId, recordId);
+      if (tries > MAX_AUTO_FIX) {
+        console.warn('[ApprovalRouting] 補正已連續失敗，停止以免無限重整。');
+        await showWarning(
+          '這張單的簽核設定可能不正確',
+          `系統偵測到目前的執行者或流程去向與應有的不一致，自動補正沒有成功。\n` +
+          `應簽：${resolved.holders.join('、')}\n請聯絡 IT 協助。`
+        );
+        return event;
+      }
+
+      // 帶 revision：兩個簽核者同時開頁面時，只有一個會成功，另一個衝突後重讀重試
+      if (!sameMembers(actual, resolved.holders)) {
+        const fixed = await updateAssigneesWithRetry(appId, recordId, resolved.holders, rec.$revision?.value);
+        if (!fixed.ok) {
+          console.warn('[ApprovalRouting] 更新執行者 API 失敗：', fixed.error);
+          return event;
+        }
+      }
+
+      // 欄位鏡像同步（顯示用 + 原生流程的 fallback 來源 + filterCond 的依據）
+      try {
+        await kintoneApi('/k/v1/record', 'PUT', {
+          app: appId, id: recordId,
+          record: {
+            [AF.CURRENT_APPROVERS]: { value: toUserValue(resolved.holders) },
+            [AF.NEXT_STATE]:        { value: wantNext },
+            [AF.REJECT_STATE]:      { value: wantReject },
+          },
+        });
+      } catch (err) {
+        console.warn('[ApprovalRouting] 欄位鏡像同步失敗：', err?.message || err);
+      }
+
+      // 執行者是在頁面載入時由伺服器算出來的，不重整的話正確的人看不到按鈕。
+      // 補正成功後下一次載入會比對一致、不再重整，天然收斂。
+      location.reload();
+      return event;
+    })
+  );
+
   // 供測試（純函式部分）
   window.ApprovalRouting = window.ApprovalRouting || {};
   window.ApprovalRouting.AdapterInternals = Object.freeze({
     planProceed,
+    isFinalSignature,
+    nextStateAfter,
+    rejectStateAt,
     findBuiltIn,
     hasAdapterFields,
     sameMembers,

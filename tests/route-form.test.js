@@ -46,9 +46,8 @@ describe('validateRouteSteps', () => {
     expect(e[0]).toContain('員工鏈段不需要「指定角色」');
   });
 
-  it('✅ 員工鏈段選「全員會簽」 → 錯', () => {
-    const e = validateRouteSteps([row({ seg: EMP, mode: '全員會簽' })], KNOWN);
-    expect(e[0]).toContain('「全員會簽」僅限指定角色段');
+  it('✅ 員工鏈段也可以選「全員會簽」（會簽關卡停在專屬的「會簽中」狀態，與位置無關）', () => {
+    expect(validateRouteSteps([row({ seg: EMP, mode: '全員會簽' })], KNOWN)).toEqual([]);
   });
 
   it('✅ 員工鏈段「任一人簽」可以', () => {

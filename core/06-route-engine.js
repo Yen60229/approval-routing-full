@@ -38,6 +38,7 @@
     ROUTE_STEP_FIELDS: RSF,
     SEGMENT_TYPE_OPTIONS: SEG,
     STEP_SIGNING_MODE_OPTIONS: SSM,
+    STATUS_TEMPLATE: STATUS,
   } = window.ApprovalRouting.Config;
 
   const { getRole, getRouteConfig, getEntryRoleId, ensureFresh } =
@@ -116,11 +117,8 @@
       const stepLabel = `第 ${i + 1} 段`;
 
       if (segType === SEG.EMPLOYEE_CHAIN) {
-        // 「全員會簽」的位置必須固定，員工鏈段位置浮動 → 產生器無法生成對應的 ALL 狀態（docs/06 §5.4）
-        if (rawMode === SSM.ALL) {
-          return { ok: false, steps: [], error: `${stepLabel}（員工鏈段）不可指定「全員會簽」，該模式僅限指定角色段` };
-        }
-
+        // 註：舊的編號模型不接受員工鏈段指定「全員會簽」（位置浮動、產生器生不出 ALL 狀態）。
+        // 固定狀態模型下會簽關卡一律停在「會簽中」，位置不再有影響，限制已解除。
         const isEntrySegment = personalCursor === undefined;
 
         if (!isEntrySegment && personalCursor === null) {
@@ -149,7 +147,8 @@
         }
 
         for (const role of seg.roleRecords) {
-          steps.push({ role, signingModeOverride: override });
+          // 員工鏈段的關卡停在「簽核中」——使用者看得出這是主管在簽
+          steps.push({ role, signingModeOverride: override, stepState: STATUS.APPROVING });
         }
         personalCursor = seg.nextRoleId;
 
@@ -168,7 +167,8 @@
         }
 
         visited.add(roleId);
-        steps.push({ role, signingModeOverride: override });
+        // 指定角色段的關卡停在「經辦人確認中」——與主管簽核區分開
+        steps.push({ role, signingModeOverride: override, stepState: STATUS.HANDLER });
 
       } else {
         return { ok: false, steps: [], error: `${stepLabel}：未知的段類型「${segType}」` };

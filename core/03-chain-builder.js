@@ -27,6 +27,8 @@
  *   2026-09-01  Jimmy/Claude  walkSegment 新增 isEntrySegment：「第一關即截止職稱則不 push」
  *                              （主管送單不用簽自己）只適用於從申請人起點開始的段。
  *                              續接段誤用此規則會無聲吃掉一位上級簽核者
+ *   2026-09-01  Jimmy/Claude  assembleChainStep 帶入 step_state（這一關停在哪個流程狀態）。
+ *                              狀態改為固定 6 個且可自迴圈後，adapter 靠這欄決定下一站
  */
 (() => {
   'use strict';
@@ -37,6 +39,7 @@
     CHECKBOX,
     CHAIN_FIELDS: CF,
     SIGNING_MODE_OPTIONS: SM,
+    STATUS_TEMPLATE: STATUS,
   } = window.ApprovalRouting.Config;
 
   const {
@@ -81,20 +84,35 @@
    * @param {number} stepNo
    * @param {string|null} [signingModeOverride=null]
    *   非 null 時覆蓋該關的 signing_mode 快照（P8 路由表 step_signing_mode 非「沿用角色表」時用）
+   * @param {string} [stepState=STATUS.APPROVING]
+   *   這一關要停在哪個流程狀態（簽核中／經辦人確認中）。存快照而非跑到時回頭查路由表：
+   *   路由改版後，在途單仍照送出當下的樣子跑完。
    * @returns {Object}
    */
-  const assembleChainStep = (roleRecord, holders, stepNo, signingModeOverride = null) => ({
-    [CF.STEP_NO]:          { value: stepNo },
-    [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
-    [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
-    [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
+  const assembleChainStep = (
+    roleRecord, holders, stepNo, signingModeOverride = null, stepState = STATUS.APPROVING
+  ) => {
     // 簽核模式快照：P8 流程管理逐關需要它決定行為（任一人簽 / 全員會簽）。
     // 存快照而非跑到時再查角色表，省一次 API 且沒有時間差問題（docs/05 評估 #3）。
     // 路由表可在段層級覆寫（step_signing_mode），覆寫值優先於角色表設定。
-    [CF.SIGNING_MODE]:     { value: signingModeOverride ?? roleRecord[RF.SIGNING_MODE]?.value ?? SM.ANY },
-    [CF.SIGNED_BY]:        { value: [] },
-    [CF.SIGNED_AT]:        { value: '' },
-  });
+    const signingMode = signingModeOverride ?? roleRecord[RF.SIGNING_MODE]?.value ?? SM.ANY;
+
+    // 全員會簽的關卡一律停在「會簽中」，不分段類型。
+    // 原因：kintone 的執行者類型（ANY/ALL）是每個狀態靜態設定的，「簽核中」與
+    // 「經辦人確認中」被所有任一人簽的關卡共用，型別只能是 ANY。
+    const effectiveState = signingMode === SM.ALL ? STATUS.COSIGNING : stepState;
+
+    return {
+      [CF.STEP_NO]:          { value: stepNo },
+      [CF.ROLE_ID]:          { value: roleRecord[RF.ROLE_ID].value },
+      [CF.STEP_NAME]:        { value: roleRecord[RF.ROLE_NAME].value },
+      [CF.EXPECTED_SIGNERS]: { value: holders.map((code) => ({ code })) },
+      [CF.STEP_STATE]:       { value: effectiveState },
+      [CF.SIGNING_MODE]:     { value: signingMode },
+      [CF.SIGNED_BY]:        { value: [] },
+      [CF.SIGNED_AT]:        { value: '' },
+    };
+  };
 
   /**
    * 找出解析後沒有任何簽核者的關卡（docs/05 評估 #2）
@@ -223,7 +241,8 @@
    * Phase 2 + 3：平行解析 holder → 擋空簽核者 → 組裝子表格
    * buildChain 與 P8 buildChainForForm 共用同一套組裝邏輯。
    *
-   * @param {Array<{role: Object, signingModeOverride: string|null}>} steps
+   * @param {Array<{role: Object, signingModeOverride: string|null, stepState?: string}>} steps
+   *   stepState 省略時視為「簽核中」（buildChain 的整鏈 fallback 全是員工鏈段）
    * @returns {Promise<{ok: boolean, chain: Object[], error: string|null}>}
    */
   const finalizeChain = async (steps) => {
@@ -238,7 +257,10 @@
 
     // Phase 3：組裝（純 CPU，瞬間完成）
     const chain = steps.map((s, idx) =>
-      assembleChainStep(s.role, holderLists[idx], idx + 1, s.signingModeOverride)
+      assembleChainStep(
+        s.role, holderLists[idx], idx + 1, s.signingModeOverride,
+        s.stepState ?? STATUS.APPROVING
+      )
     );
     return { ok: true, chain, error: null };
   };

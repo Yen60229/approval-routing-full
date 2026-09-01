@@ -388,17 +388,20 @@ describe('step_signing_mode 覆寫', () => {
     expect(chain[0].signing_mode.value).toBe('任一人簽');
   });
 
-  it('✅ 員工鏈段指定「全員會簽」→ ok=false（位置浮動，產生器生不出 ALL 狀態）', async () => {
+  it('✅ 員工鏈段也可以指定「全員會簽」，該關停在「會簽中」狀態', async () => {
+    // 舊的編號模型擋下這種設定（位置浮動、生不出對應的 ALL 狀態）。
+    // 固定狀態模型下會簽關卡一律停在專屬的「會簽中」，放在鏈的哪裡都行。
     getEntryRoleId.mockResolvedValue('ROLE_P1');
     getRouteConfig.mockResolvedValue(makeRouteConfig({
       formAppId: 1001,
       steps: [{ segmentType: EMP, stopAtTitleLevel: '課長', stepSigningMode: '全員會簽' }],
     }));
 
-    const { ok, error } = await RE().buildChainForForm('emp', 1001);
+    const { ok, chain } = await RE().buildChainForForm('emp', 1001);
 
-    expect(ok).toBe(false);
-    expect(error).toContain('全員會簽');
+    expect(ok).toBe(true);
+    expect(chain.every((s) => s.signing_mode.value === '全員會簽')).toBe(true);
+    expect(chain.every((s) => s.step_state.value === '會簽中')).toBe(true);
   });
 
 });

@@ -110,18 +110,18 @@ const Config = Object.freeze({
   }),
   STATUS_TEMPLATE: Object.freeze({
     DRAFT:     '草稿',
-    APPROVED:  '核准',
+    APPROVING: '簽核中',
+    HANDLER:   '經辦人確認中',
+    COSIGNING: '會簽中',
     REJECTED:  '駁回',
+    DECIDED:   '核決',
     CANCELLED: '作廢',
-    approving: (n) => `簽核中(${n})`,
-    parseApproving: (name) => {
-      const m = /^簽核中\((\d+)\)$/.exec(String(name ?? ''));
-      return m ? Number(m[1]) : null;
-    },
   }),
+  APPROVING_STATES: Object.freeze(['簽核中', '經辦人確認中', '會簽中']),
+  TERMINAL_STATES: Object.freeze(['核決', '作廢']),
   ACTION_TEMPLATE: Object.freeze({
     SUBMIT:  '送出',
-    APPROVE: '核准',
+    APPROVE: '同意',
     REJECT:  '駁回',
     REAPPLY: '再申請',
     CANCEL:  '作廢',
@@ -131,6 +131,8 @@ const Config = Object.freeze({
     CURRENT_APPROVERS: 'current_approvers',
     CURRENT_STEP:      'current_step',
     TOTAL_STEPS:       'total_steps',
+    NEXT_STATE:        'next_state',
+    REJECT_STATE:      'reject_state',
   }),
   CHAIN_FIELDS: Object.freeze({
     TABLE:            'approver_chain',
@@ -139,6 +141,7 @@ const Config = Object.freeze({
     STEP_NAME:        'step_name',
     EXPECTED_SIGNERS: 'expected_signers',
     SIGNING_MODE:     'signing_mode',
+    STEP_STATE:       'step_state',
     SIGNED_BY:        'signed_by',
     SIGNED_AT:        'signed_at',
   }),
@@ -154,7 +157,6 @@ const mockEnsureFreshRoles   = vi.fn().mockResolvedValue(undefined);
 const mockEnsureFresh        = vi.fn().mockResolvedValue(undefined);
 const mockGetEntryRoleId     = vi.fn();
 const mockGetCurrentUserEntry= vi.fn();
-const mockGetDistinctEntryRoleIds = vi.fn();
 const mockGetGroupMembers    = vi.fn();
 const mockGetRouteConfig     = vi.fn();
 const mockClearRouteConfigCache = vi.fn();
@@ -173,7 +175,6 @@ global.window.ApprovalRouting = {
     ensureFreshRoles:         mockEnsureFreshRoles,
     getEntryRoleId:           mockGetEntryRoleId,
     getCurrentUserEntryRoleId: mockGetCurrentUserEntry,
-    getDistinctEntryRoleIds:  mockGetDistinctEntryRoleIds,
     getGroupMembers:          mockGetGroupMembers,
     getRouteConfig:           mockGetRouteConfig,
     clearRouteConfigCache:    mockClearRouteConfigCache,
@@ -207,7 +208,6 @@ global.__mocks__ = {
   ensureFresh:       mockEnsureFresh,
   ensureFreshRoles:  mockEnsureFreshRoles,
   getEntryRoleId:    mockGetEntryRoleId,
-  getDistinctEntryRoleIds: mockGetDistinctEntryRoleIds,
   getGroupMembers:   mockGetGroupMembers,
   getRouteConfig:    mockGetRouteConfig,
   clearRouteConfigCache: mockClearRouteConfigCache,

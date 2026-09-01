@@ -4,7 +4,7 @@
  * 1. route_steps 子表格逐列：依「段類型」淡化不相關的欄位（子表格內欄位無法用
  *    setFieldShown，改以 DOM 淡化 + pointer-events 停用）
  * 2. 「指定角色」格子掛 core/07-role-picker.js 的可搜尋下拉（畫面顯示 role_name，寫入 role_id）
- * 3. submit 驗證：段類型與欄位配對、「全員會簽」僅限指定角色段、指定角色須存在、至少一列
+ * 3. submit 驗證：段類型與欄位配對、指定角色須存在、順序欄不混填不重複、至少一列
  * 4. 載入時比對 stop_at_title_level／skip_title_levels 選項與 685 title_level 是否同步（不一致警告）
  *
  * 【子表格 DOM 定位】不寫死欄位 ID。每個 <tr> 內的儲存格用 `control-<型別>-field-gaia`
@@ -27,6 +27,8 @@
  *                              只淡化不清值 submit 會被 validateRouteSteps 擋
  *   2026-09-01  Jimmy/Claude  validateRouteSteps 新增 step_no 檢查（混填／重複）。
  *                              順序決定員工鏈段的接續關係，排錯等於鏈錯
+ *   2026-09-01  Jimmy/Claude  解除「員工鏈段不可指定全員會簽」的限制（固定狀態模型下
+ *                              會簽關卡停在專屬的「會簽中」狀態，與位置無關）
  */
 (() => {
   'use strict';
@@ -37,7 +39,6 @@
     ROUTE_FIELDS: RTF,
     ROUTE_STEP_FIELDS: RSF,
     SEGMENT_TYPE_OPTIONS: SEG,
-    STEP_SIGNING_MODE_OPTIONS: SSM,
   } = window.ApprovalRouting.Config;
 
   const { getAllRoles } = window.ApprovalRouting.ApiClient;
@@ -156,11 +157,8 @@
 
     let dirty = false;
     if (seg === SEG.EMPLOYEE_CHAIN) {
+      // 簽核模式不必清：兩種段類型都能選「全員會簽」（會簽關卡停在專屬的「會簽中」狀態）
       if (v[RSF.ROLE_ID].value) { v[RSF.ROLE_ID].value = ''; dirty = true; }
-      if (v[RSF.STEP_SIGNING_MODE].value === SSM.ALL) {
-        v[RSF.STEP_SIGNING_MODE].value = SSM.INHERIT; // 全員會簽只能配指定角色段
-        dirty = true;
-      }
     } else if (seg === SEG.FIXED_ROLE) {
       if (v[RSF.STOP_AT_TITLE_LEVEL].value) { v[RSF.STOP_AT_TITLE_LEVEL].value = ''; dirty = true; }
       if ((v[RSF.SKIP_TITLE_LEVELS].value || []).length) { v[RSF.SKIP_TITLE_LEVELS].value = []; dirty = true; }
@@ -321,7 +319,8 @@
 
       if (seg === SEG.EMPLOYEE_CHAIN) {
         if (roleId) errs.push(`第 ${n} 列：員工鏈段不需要「指定角色」，請清空。`);
-        if (mode === SSM.ALL) errs.push(`第 ${n} 列：「全員會簽」僅限指定角色段。`);
+        // 註：舊的編號狀態模型不接受員工鏈段選「全員會簽」（位置浮動、生不出對應的 ALL 狀態）。
+        // 固定狀態模型下會簽關卡一律停在「會簽中」，位置不再有影響，限制已解除。
       } else if (seg === SEG.FIXED_ROLE) {
         if (!roleId) {
           errs.push(`第 ${n} 列：指定角色段必須選一個角色。`);
