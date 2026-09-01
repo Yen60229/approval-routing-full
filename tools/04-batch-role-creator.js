@@ -31,6 +31,9 @@
  *   2026-08-19  Jimmy/Claude  使用者解析改以「登入名稱 + valid」判定使用狀態：同名帳號
  *                              全部保留、姓名比對只認使用中者、停用帳號一律擋下並指出
  *                              同名的在職帳號。修正離職又回鍋同事被誤判為停用的問題
+ *   2026-09-01  Jimmy/Claude  視窗加上永遠可見的關閉鈕（×）與 Esc 關閉。原本的「關閉」按鈕在
+ *                              「卡片分組」區塊裡，而那一區在匯入 CSV 前是 display:none——
+ *                              還沒匯資料時視窗根本關不掉
  */
 (function () {
   'use strict';
@@ -261,6 +264,30 @@
       }
 
       /* ── 標題 ── */
+      #batch-role-modal .modal-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      /* 關閉鈕永遠在，不隨「卡片分組」區塊一起被隱藏——
+         沒匯入資料前那一區是 display:none，底下的「關閉」按鈕跟著看不見，
+         視窗就變成關不掉（實測回報） */
+      #batch-role-modal .modal-x {
+        flex: none;
+        width: 40px;
+        height: 40px;
+        border: 1px solid #dfe6e9;
+        border-radius: 8px;
+        background: #fff;
+        color: #636e72;
+        font-size: 26px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background .15s, color .15s;
+      }
+      #batch-role-modal .modal-x:hover { background: #ffeaea; color: #e74c3c; border-color: #e74c3c; }
+      #batch-role-modal .modal-x:focus-visible { outline: 2px solid #2980b9; outline-offset: 2px; }
       #batch-role-modal h2 {
         margin: 0 0 26px;
         padding-bottom: 14px;
@@ -648,7 +675,10 @@
     const modalHTML = `
       <div id="batch-role-modal">
         <div id="batch-role-modal-inner">
-          <h2>批次角色建立（依組織卡片帶入）</h2>
+          <div class="modal-head">
+            <h2>批次角色建立（依組織卡片帶入）</h2>
+            <button type="button" class="modal-x" id="br-btn-x" aria-label="關閉" title="關閉（Esc）">&times;</button>
+          </div>
 
           <div class="section">
             <h3>1. 匯入 CSV</h3>
@@ -2491,10 +2521,34 @@
     }
   }
 
+  /**
+   * 關閉視窗
+   *
+   * 已經解析過 CSV（卡片區顯示中）就先確認——那代表使用者已經花時間分好組、
+   * 設好每一列的單位與職稱，關掉就全沒了。還沒匯入資料時直接關，不囉嗦。
+   */
+  function closeModal() {
+    const modal = document.getElementById('batch-role-modal');
+    if (!modal || modal.style.display === 'none') return;
+
+    const hasWork = document.getElementById('br-sec-table')?.style.display !== 'none';
+    if (hasWork && !window.confirm('關閉後這次分好的卡片設定會消失，確定要關閉嗎？')) return;
+
+    modal.style.display = 'none';
+  }
+
   function bindEvents() {
-    document.getElementById('br-btn-close').onclick = () => {
-      document.getElementById('batch-role-modal').style.display = 'none';
-    };
+    document.getElementById('br-btn-close').onclick = closeModal;
+    document.getElementById('br-btn-x').onclick = closeModal;
+
+    // Esc 關閉。掛在 document 上，因為焦點可能在視窗內任何一個輸入框。
+    // 只在視窗開著時作用，不干擾 kintone 本身的鍵盤操作。
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const modal = document.getElementById('batch-role-modal');
+      if (!modal || modal.style.display === 'none') return;
+      closeModal();
+    });
 
     document.getElementById('br-btn-parse').onclick = parseCSVAndFetchOrgs;
 
