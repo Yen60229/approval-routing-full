@@ -108,6 +108,24 @@ const Config = Object.freeze({
     APPLICANT: '退回申請人',
     PREV_STEP: '退回上一關',
   }),
+  STATUS_TEMPLATE: Object.freeze({
+    DRAFT:     '草稿',
+    APPROVED:  '核准',
+    REJECTED:  '駁回',
+    CANCELLED: '作廢',
+    approving: (n) => `簽核中(${n})`,
+    parseApproving: (name) => {
+      const m = /^簽核中\((\d+)\)$/.exec(String(name ?? ''));
+      return m ? Number(m[1]) : null;
+    },
+  }),
+  ACTION_TEMPLATE: Object.freeze({
+    SUBMIT:  '送出',
+    APPROVE: '核准',
+    REJECT:  '駁回',
+    REAPPLY: '再申請',
+    CANCEL:  '作廢',
+  }),
   ADAPTER_FIELDS: Object.freeze({
     APPROVER_CHAIN:    'approver_chain',
     CURRENT_APPROVERS: 'current_approvers',

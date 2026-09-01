@@ -47,6 +47,8 @@
     SEGMENT_TYPE_OPTIONS: SEG,
     STEP_SIGNING_MODE_OPTIONS: SSM,
     ADAPTER_FIELDS: AF,
+    STATUS_TEMPLATE: TPL,
+    ACTION_TEMPLATE: ACT,
     CHECKBOX,
   } = window.ApprovalRouting.Config;
 
@@ -54,26 +56,7 @@
   const { safeHandler, kintoneApi, showWarning, showConfirm, showSuccess } =
     window.ApprovalRouting.Utils;
 
-  // -------------------------------------------------------------------
-  // 設定：狀態與動作的命名模板（全公司統一，docs/06 §5.1）
-  // -------------------------------------------------------------------
-
-  const TPL = Object.freeze({
-    DRAFT:     '草稿',
-    APPROVED:  '核准',
-    REJECTED:  '駁回',
-    CANCELLED: '作廢',
-    /** 簽核中的第 n 關。狀態名絕不綁職稱——綁了就回到舊系統把組織寫進設定的老路 */
-    approving: (n) => `簽核中(${n})`,
-  });
-
-  const ACT = Object.freeze({
-    SUBMIT:   '送出',
-    APPROVE:  '核准',
-    REJECT:   '駁回',
-    REAPPLY:  '再申請',
-    CANCEL:   '作廢',
-  });
+  // 狀態／動作命名模板來自 core/01-config.js（與 adapters/00 共用同一份，見該處註解）
 
   /** K 的硬上限（docs/06 §5.1 建議 10）。超過代表資料有問題，不是真的有人要簽 11 關 */
   const MAX_K = 10;

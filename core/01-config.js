@@ -17,6 +17,9 @@
  *   2026-08-31  Jimmy/Claude  P8 Phase B：新增 form_route_config（App 3）欄位代碼
  *                              ROUTE_FIELDS / ROUTE_STEP_FIELDS、段類型與簽核模式選項、
  *                              標準 adapter 規約欄位 ADAPTER_FIELDS（規格見 docs/02 App 3）
+ *   2026-09-01  Jimmy/Claude  P8 Phase C/D：新增 STATUS_TEMPLATE / ACTION_TEMPLATE。
+ *                              產生器建狀態、adapter 從狀態名反推第幾關，兩邊共用同一份，
+ *                              各存一份會讓改狀態名靜默斷掉 adapter
  */
 (() => {
   'use strict';
@@ -119,6 +122,38 @@
     TOTAL_STEPS:       'total_steps',       // 數值：鏈總長，供狀態轉移 filterCond 分流
   });
 
+  /**
+   * 流程管理的狀態與動作命名模板（docs/06 §5.1，全公司統一）
+   *
+   * ⚠️ **產生器（tools/10）與 adapter（adapters/00）必須共用這一份。**
+   * 產生器據此建狀態、adapter 據此從狀態名反推目前第幾關；各存一份的話，
+   * 改個狀態名會讓 adapter 靜默認不得狀態——單子照跑，但執行者全錯。
+   *
+   * 狀態名絕不綁職稱（不寫「課長審核中」），否則又回到舊系統把組織寫進設定的老路。
+   */
+  const STATUS_TEMPLATE = Object.freeze({
+    DRAFT:     '草稿',
+    APPROVED:  '核准',
+    REJECTED:  '駁回',
+    CANCELLED: '作廢',
+    /** 簽核中的第 n 關 */
+    approving: (n) => `簽核中(${n})`,
+    /** 從狀態名反推第幾關；不是簽核關卡回 null */
+    parseApproving: (name) => {
+      const m = /^簽核中\((\d+)\)$/.exec(String(name ?? ''));
+      return m ? Number(m[1]) : null;
+    },
+  });
+
+  /** 流程管理的動作名稱（同上，兩邊共用） */
+  const ACTION_TEMPLATE = Object.freeze({
+    SUBMIT:  '送出',
+    APPROVE: '核准',
+    REJECT:  '駁回',
+    REAPPLY: '再申請',
+    CANCEL:  '作廢',
+  });
+
   /** 共用子表格欄位代碼（嵌入各申請 App） */
   const CHAIN_FIELDS = Object.freeze({
     TABLE:            'approver_chain',
@@ -149,6 +184,8 @@
     STEP_SIGNING_MODE_OPTIONS,
     REJECT_TARGET_OPTIONS,
     ADAPTER_FIELDS,
+    STATUS_TEMPLATE,
+    ACTION_TEMPLATE,
     CHAIN_FIELDS,
     ROLE_ID_PREFIX,
   });

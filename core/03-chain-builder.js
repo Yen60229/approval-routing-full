@@ -407,5 +407,8 @@
     // 只維護這一份，不重寫第二套
     walkSegment,
     finalizeChain,
+    // P8 標準 adapter（adapters/00）的 detail.show 安全網要「跑到那一關才即時解析」，
+    // 用的必須是同一套解析邏輯（群組展開、一筆記錄一個人），不另寫一份
+    resolveHolders,
   });
 })();

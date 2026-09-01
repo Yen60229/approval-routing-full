@@ -6,10 +6,10 @@
 
 ## 當前狀態
 
-- **當前 Phase**:**P8 Phase C 程式碼完成，待 kintone 端實測；下一步 Phase D adapter**
+- **當前 Phase**:**P8 Phase A～D 程式碼全部完成，待 kintone 端端到端實測**
 - **最後更新**:2026-09-01
 - **git**:全部已 commit，工作區乾淨
-- **測試**:`npm test` → **202 項全過**（7 檔）
+- **測試**:`npm test` → **234 項全過**（8 檔）
 
 ### 2026-09-01 全盤分析 + 段接續修正
 
@@ -39,18 +39,26 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 - **執行者機制定案**：`process.proceed` 直寫 `current_approvers` 不穩（已知行為）→ 改用
   `PUT /k/v1/record/assignees`（登入者身分呼叫）為權威 + `detail.show` 安全網。詳見 `docs/06` §5.3、對話脈絡 §9.8
 
+**Phase C／D 也已完成**（2026-09-01 同日）：`tools/10-status-generator.js`（產生器）、
+`adapters/00-standard-adapter.js`（標準 adapter）、`core/01` 的 `STATUS_TEMPLATE`。
+**P8 的程式碼到此全部寫完，剩下的都在 kintone 端。**
+
 **待辦（都在 kintone 端，換機後可繼續）：**
-1. 上傳 736：`core/01,05,04,02,03,06,07` + `apps/form-route/01-route-form.js` → 手動驗
-   （列增刪重掛 picker、選角色寫得進 `role_id`、切段類型會淡化、submit 擋錯、職稱不同步會警告）
-2. 重上 685：`core/01~07` + 既有 7 支 → `03` 下拉手動回歸（選取／亂打還原／切換後 Timeline 刷新）
-3. 測試 App 實測「更新執行者 API」：狀態已設執行者時 `PUT /k/v1/record/assignees` 帶 revision 換人 → 該人能執行動作
-4. P2 舊待辦：core 3 支 + `apps/employee-entry` 2 支 + `tools/05` 上傳 686 測試（與 P8 不互相阻塞）
+1. 上傳 736：`core/01,05,04,02,03,06,07` + `apps/form-route/01-route-form.js` + `tools/10-status-generator.js`
+   → 手動驗（列增刪重掛 picker、選角色寫得進 `role_id`、切段類型會淡化、submit 擋錯、職稱不同步會警告）
+2. **產生器冒煙測試**（優先做，5 分鐘）：拿測試 App 跑一次「產生流程設定」（K 會很小），
+   到「表單設定 → 流程管理」確認「簽核中(1)」上**只有一顆「核准」按鈕**。
+   → 這是 docs/06 §5.2 唯一無法從官方文件百分之百確認的一點（同名動作）。
+   若變成兩顆，把 `tools/10` 的 `ACT.APPROVE` 拆成兩個名字即可（UX 差一點，功能相同）。
+3. 重上 685：`core/01~07` + 既有 7 支 → `03` 下拉手動回歸（選取／亂打還原／切換後 Timeline 刷新）
+4. 測試 App 實測「更新執行者 API」：狀態已設執行者時 `PUT /k/v1/record/assignees` 帶 revision 換人 → 該人能執行動作
+5. 端到端：全新測試表單埋 4 個規約欄位 + 掛 adapter → 三種路由 × 兩種鏈深度；
+   在途單改 685 的 `holder_user` 確認跑到該關拿到新的人
+6. P2 舊待辦：core 3 支 + `apps/employee-entry` 2 支 + `tools/05` 上傳 686 測試（與 P8 不互相阻塞）
 
 **一個待你決定的設計點：**
 - 指定角色段的 RolePicker 依 role_name 去重、寫**第一筆** role_id，`buildChainForForm` 解析成**單一**簽核者。
   若某職能關要「同名多人全簽」→ 需擴充引擎（fixed-role 段展開同名 role_id）。**現在需要嗎？**
-
-**驗證通過後 → Phase C／D**：`tools/10-status-generator.js`、`adapters/00-standard-adapter.js`（見下方 Phase C／D 區塊）
 
 ### kintone JS 上傳順序（2026-09-01 對過，正確）
 
@@ -372,16 +380,27 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
       在畫面上只出現**一顆**按鈕；這是 §5.2 唯一無法從文件百分之百確認的一點）
 - [ ] 上傳順序：736 加掛 `tools/10-status-generator.js`（需排在 `core/06` 之後）
 
-#### ⬜ Phase D — 標準 adapter（下一輪）
-- [ ] `adapters/00-standard-adapter.js` — 一支掛所有申請 App
-  - submit 需檢查 `chain.length > max_depth`（組織變動會讓鏈長超過已部署狀態數，單子會卡在最後一關）
-  - submit 僅在「草稿」狀態重算鏈；proceed 需防 race（`current_step` 與動作關卡不一致即擋下）
-  - **執行者寫入**：proceed best-effort 寫 `current_approvers`；`detail.show` 當安全網——
-    狀態為簽核中(n) 但實際執行者 ≠ 子表格第 n 關 `expected_signers` → 即時解析 →
-    `PUT /k/v1/record/assignees`（帶 revision，衝突重試一次）+ 同步更新 `current_approvers`
+#### ✅ Phase D — 標準 adapter（2026-09-01，程式碼完成待 kintone 實測）
+- [x] `adapters/00-standard-adapter.js` — 一支掛所有申請 App，完全不認得任何特定表單
+  - **submit**：僅在「草稿」重算鏈（已跑的單重算會跟簽過的關卡對不上）；
+    `forceFresh: true`；檢查 `chain.length > max_depth` 擋在送出當下；
+    寫 `approver_chain` / `total_steps` / `current_step=0` / `current_approvers`=第 1 關
+  - **process.proceed**：依 `event.nextStatus` 決定推進到第幾關 + 即時解析該關簽核者；
+    併發防護（`current_step` 與畫面關卡不符即擋，0 視為舊單不擋）；記錄 `signed_by`/`signed_at`
+  - **detail.show 安全網**：即時解析 vs 實際執行者不一致 → `PUT /k/v1/record/assignees`
+    （帶 revision，衝突重讀重試一次）+ 同步 `current_approvers` + 重整；
+    sessionStorage 記補正次數，連續失敗 2 次就停手並提示，不無限重整
+- [x] **查證到的關鍵事實**（docs/06 升 1.4）：kintone 官方載明**全員會簽的關卡，每個人按一次
+      都會觸發 proceed 而狀態不變**。所以推進必須由 `nextStatus` 驅動，用 `current_step + 1`
+      會讓會簽關卡每有一人簽名就跳一關
+- [x] `core/01-config.js` 新增 `STATUS_TEMPLATE` / `ACTION_TEMPLATE`——產生器建狀態、
+      adapter 從狀態名反推第幾關，**兩邊共用同一份**（各存一份會讓改狀態名靜默斷掉 adapter）
+- [x] `core/03` 開放 `resolveHolders`：安全網的即時解析要用同一套邏輯，不另寫一份
+- [x] 測試 `standard-adapter`（32：planProceed 分支全覆蓋 + submit/proceed 實際寫入）→ **234 項全過**
 - [ ] 全新測試表單端到端：三種路由（純個人段／含職能段／**含跳關**）× 兩種鏈深度
 - [ ] 在途單改 685 的 `holder_user`，確認跑到該關拿到新的人（驗證即時解析 + 更新執行者 API 補正）
 - [ ] kintone 權限設定：記錄權限依狀態開放 + JS disabled（見 `docs/02` 權限節）
+- [ ] 申請 App 上傳順序：`coding_tools` → `core/01,05,04,02,03,06` → `adapters/00-standard-adapter`
 
 ### ⬜ P9 — 大規模切換準備
 - [ ] `scripts/migration/` — 舊資料轉換
@@ -445,6 +464,7 @@ route-engine 測試裡一個續段案例都沒有。新測試已驗證修正前�
 | **P8 Phase A** | **2026-08-31** | 引擎前置修復 4 項（docs/05 #1#2#3#4）完成，91 項測試全過 |
 | **P8 Phase B a/b/c** | **2026-08-31** | ROUTE 欄位代碼、`getRouteConfig` 全量快取、`core/06-route-engine.js` `buildChainForForm`；`walkSegment`/`finalizeChain` 由 03 抽出共用；120 項測試全過。剩 d（表單 UI）卡 App 736 掛載 |
 | **P8 執行者機制定案** | **2026-08-31** | 基石假設否決：proceed 直寫欄位不穩（已知行為），執行者改用「更新執行者 API」`PUT /k/v1/record/assignees` 為權威 + `detail.show` 安全網；docs/06 升 1.2、docs/02 與對話脈絡 §9.8 同步 |
+| **P8 Phase D** | **2026-09-01** | 標準 adapter：submit 重算鏈 + max_depth 擋關、proceed 依 nextStatus 推進（全員會簽會在狀態不變時觸發，不能用 current_step+1）、detail.show 用更新執行者 API 補正。`STATUS_TEMPLATE` 移入 config 供產生器與 adapter 共用。docs/06 升 1.4。234 項測試全過 |
 | **P8 Phase C** | **2026-09-01** | status.json 產生器：`tools/10-status-generator.js` + `expandRouteSegments` 抽出 + `getDistinctEntryRoleIds`。實作前查證推翻三項推測（`ANY` vs `ONE`、`FIELD_ENTITY` vs `CUSTOM_FIELD`、只增不減），docs/06 升 1.3。202 項測試全過。剩 736 上傳實測整條管線 |
 | **P8 段接續修正** | **2026-09-01** | 全盤分析掃出兩個真 bug：續段第一關被「主管送單不用簽自己」規則誤吃（`walkSegment` 補 `isEntrySegment`）、續段接在終點後誤報循環（`personalCursor` 改三態）；順帶補 `step_no` 混填／重複驗證。158 項測試全過 |
 | **P8 Phase B 收尾** | **2026-09-01** | App 736 建好＋schema 驗證、App ID 回填 736；`core/07-role-picker.js` 抽共用（方案 A）＋`03` 改用；`apps/form-route/01-route-form.js`（子表格逐列 DOM 淡化＋RolePicker＋`validateRouteSteps`）。149 項測試全過。剩：736／685 手動回歸、更新執行者 API 實測 |
