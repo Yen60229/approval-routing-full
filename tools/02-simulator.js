@@ -2,16 +2,21 @@
  * 測試模擬器 — 任選員工模擬簽核鏈（不寫入資料）
  *
  * 在角色定義表或員工起點對照表列表頁的「查詢」選單提供「模擬器」，
- * HR / IT 可輸入員工代碼，立即預覽該員工送單後的完整簽核鏈。
+ * HR / IT 輸入姓名或帳號的部分字元即可從清單點選，立即預覽該員工送單後的完整簽核鏈。
  *
  * 【依賴】
  *   - core/01-config.js（Config）
  *   - core/02-api-client.js（ApiClient）
  *   - core/03-chain-builder.js（Engine.simulateChain）
  *   - core/04-utils.js（Utils）
+ *   - core/07-role-picker.js（RolePicker：可搜尋下拉，這裡拿來搜人不是搜角色，
+ *     純 DOM 元件不認欄位，見 core/07 檔頭說明）
+ *   - core/08-directory.js（Directory.fetchAllUsers：全公司使用者清單）
  *
  * 【變更履歷】
  *   2026-04-18  Jimmy/Claude  初版建立
+ *   2026-09-01  Jimmy/Claude  輸入框改成可搜尋下拉：打姓名或帳號的部分字元就能從清單點選，
+ *                              不必自己記住並打對完整的登入帳號
  */
 (() => {
   'use strict';
@@ -22,6 +27,8 @@
     ...window.ApprovalRouting.Utils,
     clearRoleCache: window.ApprovalRouting.ApiClient.clearRoleCache,
   };
+  const { create: createPicker } = window.ApprovalRouting.RolePicker;
+  const { fetchAllUsers } = window.ApprovalRouting.Directory;
 
 
   // -------------------------------------------------------------------
@@ -64,27 +71,48 @@
   // -------------------------------------------------------------------
 
   const runSimulator = async () => {
-    // Step 1：輸入員工代碼
-    const { value: employeeCode, isConfirmed } = await Swal.fire({
+    // Step 0：先把全公司使用者清單抓回來，才有得搜尋
+    Swal.fire({ title: '讀取人員名單...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+    const { actives } = await fetchAllUsers();
+    Swal.close();
+
+    // Step 1：搜姓名或帳號、點選一個人
+    // 顯示名稱把姓名跟帳號併在同一個字串裡，RolePicker 只認 name 這個欄位做子字串比對，
+    // 這樣打「山田」或打「yamada」都篩得到，不必額外改共用元件的搜尋邏輯。
+    let picked = null;
+    const { isConfirmed } = await Swal.fire({
       title: '簽核鏈模擬器',
       html: `
         <div style="text-align:left; margin-bottom:8px; font-size:14px; color:#555;">
-          輸入員工的 kintone 使用者代碼（登入帳號），模擬其送單後的簽核鏈。
+          輸入姓名或帳號的部分字元搜尋，選一個人模擬其送單後的簽核鏈。
         </div>
-        <input id="ar-sim-input" class="swal2-input" placeholder="例：yamada.taro"
-               style="font-size:15px;" />
+        <div id="ar-sim-picker-slot"></div>
       `,
+      width: 480,
       showCancelButton: true,
       confirmButtonText: '模擬',
       cancelButtonText: '取消',
+      didOpen: () => {
+        const slot = document.getElementById('ar-sim-picker-slot');
+        const picker = createPicker({
+          options: actives.map((u) => ({ id: u.code, name: `${u.name}（${u.code}）` })),
+          placeholder: '輸入姓名或帳號…',
+          emptyText: '找不到符合的人員',
+          ungroupedLabel: '在職人員',
+          minWidth: 400,
+          onSelect: (opt) => { picked = opt; },
+        });
+        slot.appendChild(picker.el);
+        picker.el.querySelector('input')?.focus();
+      },
       preConfirm: () => {
-        const val = document.getElementById('ar-sim-input').value.trim();
-        if (!val) Swal.showValidationMessage('請輸入員工代碼');
-        return val;
+        if (!picked) { Swal.showValidationMessage('請從清單選一個人'); return false; }
+        return picked;
       },
     });
 
-    if (!isConfirmed || !employeeCode) return;
+    if (!isConfirmed || !picked) return;
+    const employeeCode = picked.id;
 
     // Step 2：強制重新載入最新角色資料
     clearRoleCache();
@@ -106,7 +134,7 @@
     }
 
     await Swal.fire({
-      title: `${employeeCode} 的簽核鏈（共 ${chain.length} 關）`,
+      title: `${picked.name} 的簽核鏈（共 ${chain.length} 關）`,
       html: `<div style="text-align:left; max-height:420px; overflow-y:auto; padding:8px 4px;">
                ${renderChainResult(chain)}
              </div>`,
@@ -124,7 +152,7 @@
     id:    'simulator',
     group: 'query',
     label: '模擬器',
-    hint:  '輸入員工代碼，預覽他送單後的完整簽核鏈',
+    hint:  '搜姓名或帳號選一個人，預覽他送單後的完整簽核鏈',
     apps:  [APP_ID.ROLE_DEFINITION, APP_ID.EMPLOYEE_ENTRY],
     run:   runSimulator,
   });
