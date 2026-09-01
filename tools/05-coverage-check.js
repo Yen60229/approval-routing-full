@@ -1304,10 +1304,12 @@
 
     const renderRows = () => {
       const unit = toolbar.querySelector('[data-role="unit"]').value;
-      const kw = toolbar.querySelector('[data-role="search"]').value.trim();
+      // 英數字不分大小寫（打 jim 要搜得到 Jim）；中文沒有大小寫，toLowerCase 不影響
+      const kw = toolbar.querySelector('[data-role="search"]').value.trim().toLowerCase();
       visible = users.filter((u) =>
         (!unit || u.units.includes(unit)) &&
-        (!kw || u.name.includes(kw) || u.code.includes(kw) || (u.jobTitle || '').includes(kw)));
+        (!kw || u.name.toLowerCase().includes(kw) || u.code.toLowerCase().includes(kw) ||
+          (u.jobTitle || '').toLowerCase().includes(kw)));
 
       tbody.innerHTML = visible.map((u) => `
         <tr style="border-top:1px solid #eee;">
@@ -1558,7 +1560,8 @@
 
     /** 依搜尋與篩選切換每列顯示，並更新計數與按鈕狀態 */
     const refresh = () => {
-      const kw = toolbar.querySelector('[data-role="search"]').value.trim();
+      // 英數字不分大小寫（打 jim 要搜得到 Jim）
+      const kw = toolbar.querySelector('[data-role="search"]').value.trim().toLowerCase();
       const onlyUnset = toolbar.querySelector('[data-role="only-unset"]').checked;
 
       let assigned = 0;
@@ -1662,7 +1665,7 @@
           (status && isNextRoleConsistent(roleId, roles) === false) ? '' : 'none';
 
         const haystack = [s.row.unit, s.row.title,
-          ...s.row.members.map((m) => `${m.name} ${m.code}`)].join(' ');
+          ...s.row.members.map((m) => `${m.name} ${m.code}`)].join(' ').toLowerCase();
         const show = (!kw || haystack.includes(kw)) && (!onlyUnset || !hasRole);
         s.tr.style.display = show ? '' : 'none';
         if (show && s.row.isException) exceptionVisible = true;
@@ -2090,7 +2093,8 @@
 
     /** 依搜尋與篩選切換每列顯示，並更新計數與按鈕狀態 */
     const refresh = () => {
-      const kw = toolbar.querySelector('[data-role="search"]').value.trim();
+      // 英數字不分大小寫（打 jim 要搜得到 Jim）
+      const kw = toolbar.querySelector('[data-role="search"]').value.trim().toLowerCase();
       const onlyFixable = toolbar.querySelector('[data-role="only-fixable"]').checked;
 
       let pickedRows = 0;
@@ -2122,7 +2126,7 @@
         }
 
         const haystack = [s.row.name, s.row.unitName, s.row.roleId,
-          ...s.row.people.map((p) => `${p.name} ${p.code}`)].join(' ');
+          ...s.row.people.map((p) => `${p.name} ${p.code}`)].join(' ').toLowerCase();
         const show = (!kw || haystack.includes(kw)) && (!onlyFixable || fixable);
         s.tr.style.display = show ? '' : 'none';
 

@@ -114,8 +114,9 @@
 
     /** 依關鍵字重繪清單 */
     const renderItems = (keyword) => {
-      const kw = (keyword || '').trim();
-      filteredItems = kw ? options.filter((o) => o.name.includes(kw)) : options.slice();
+      // 英數字不分大小寫（打 jim 要搜得到 Jim）；中文本來就沒有大小寫，toLowerCase 不影響
+      const kw = (keyword || '').trim().toLowerCase();
+      filteredItems = kw ? options.filter((o) => o.name.toLowerCase().includes(kw)) : options.slice();
       activeIndex = filteredItems.length ? 0 : -1;
 
       panel.innerHTML = '';

@@ -385,10 +385,11 @@
 
     const render = () => {
       const unit = unitSel.value;
-      const kw = searchEl.value.trim();
+      // 英數字不分大小寫（打 jim 要搜得到 Jim）
+      const kw = searchEl.value.trim().toLowerCase();
       visible = groups.filter((g) =>
         (!unit || g.unitName === unit) &&
-        (!kw || g.roleName.includes(kw)));
+        (!kw || g.roleName.toLowerCase().includes(kw)));
 
       tbody.innerHTML = visible.map((g) => `
         <tr style="border-top:1px solid #eee;">
