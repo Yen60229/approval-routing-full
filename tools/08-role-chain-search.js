@@ -138,7 +138,7 @@
     panel.innerHTML = `
       ${PANEL_STYLES}
       <div style="display:flex; align-items:center; margin-bottom:12px;">
-        <h2 style="font-size:18px; margin:0;">查簽核鏈</h2>
+        <h2 style="font-size:18px; margin:0;">查簽核流程</h2>
         <span style="font-size:13px; color:#666; margin-left:12px;">
           共 ${groups.length} 個關卡（啟用中角色 ${roleMap.size} 筆）
         </span>
@@ -148,7 +148,7 @@
       <div style="flex:1; min-height:0; display:flex; gap:16px;">
         <div style="width:320px; flex-shrink:0; display:flex; flex-direction:column; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;">
           <div style="padding:10px; border-bottom:1px solid #e5e7eb;">
-            <input data-role="search" type="text" placeholder="輸入角色名稱或 role_id…"
+            <input data-role="search" type="text" placeholder="輸入關卡名稱或角色代碼…"
               style="width:100%; box-sizing:border-box; padding:8px 10px; font-size:14px; font-family:inherit; border:1px solid #cbd5e1; border-radius:6px;">
             <div data-role="count" style="font-size:12px; color:#94a3b8; margin-top:6px;"></div>
           </div>
@@ -157,7 +157,7 @@
 
         <div data-role="detail" style="flex:1; min-width:0; overflow:auto; border:1px solid #e5e7eb; border-radius:8px; padding:14px 16px;">
           <div style="color:#94a3b8; font-size:14px; padding:24px 0; text-align:center;">
-            從左邊選一個關卡，這裡會顯示它完整的上下游簽核鏈
+            從左邊選一個關卡，這裡會顯示它前後接到哪些關卡
           </div>
         </div>
       </div>
@@ -249,7 +249,7 @@
       renderDetail(group, roleId).catch((err) => {
         console.error('[ApprovalRouting] 簽核鏈渲染失敗', err);
         detail.querySelector('[data-role="chain"]').innerHTML =
-          '<div style="color:#c0392b; padding:12px;">簽核鏈載入失敗，請重新選一次</div>';
+          '<div style="color:#c0392b; padding:12px;">簽核流程載入失敗，請重新選一次</div>';
       });
     };
 
@@ -328,8 +328,8 @@
   window.ApprovalRouting.ToolRegistry.register({
     id:    'role-chain-search',
     group: 'query',
-    label: '查簽核鏈',
-    hint:  '輸入角色名稱，看它完整的上下游簽核鏈',
+    label: '查簽核流程',
+    hint:  '輸入關卡名稱，看它前後會接到哪些關卡',
     apps:  [APP_ID.ROLE_DEFINITION],
     run:   runTool,
   });

@@ -217,7 +217,7 @@
     if (!hasIssues) {
       return `
         <div style="text-align:center; padding:20px; color:#2e7d32; font-size:18px;">
-          ✅ 全部 ${totalRoles} 個角色健康，無異常！
+          ✅ 全部 ${totalRoles} 個關卡都正常，沒有發現問題！
         </div>`;
     }
 
@@ -246,23 +246,23 @@
 
     return `
       <div style="text-align:left; max-height:400px; overflow-y:auto; font-size:14px;">
-        <div style="margin-bottom:12px; color:#666;">共掃描 ${totalRoles} 個角色</div>
-        ${section('🔴 循環鏈', '#c62828', issues.circular,
-          (i) => `<li>從 ${roleLink(i.startId, i.startRecordId)} 出發，在 ${roleLink(i.loopAt, i.loopRecordId)} 形成循環</li>`)}
-        ${section('🔴 同名角色設定不一致', '#c62828', issues.inconsistent,
-          (i) => `<li><strong>${esc(i.roleName)}</strong>（${i.records.length} 筆記錄，同一關卻設定不同）
+        <div style="margin-bottom:12px; color:#666;">共檢查 ${totalRoles} 個關卡</div>
+        ${section('🔴 流程繞圈（永遠簽不完）', '#c62828', issues.circular,
+          (i) => `<li>從 ${roleLink(i.startId, i.startRecordId)} 出發，繞一圈又回到 ${roleLink(i.loopAt, i.loopRecordId)}，單子會一直往上送、永遠結不了案</li>`)}
+        ${section('🔴 同一關卡的設定前後不一致', '#c62828', issues.inconsistent,
+          (i) => `<li><strong>${esc(i.roleName)}</strong>（這一關有 ${i.records.length} 筆設定，但內容不一樣）
             <ul style="margin:4px 0 8px; padding-left:18px; color:#666; font-size:12px;">
               ${i.records.map((r) => `<li>${roleLink(r.roleId, r.recordId)}　下一關 ${roleLink(r.nextRoleId, r.nextRecordId)}${r.isEnd ? '　<strong>終點</strong>' : ''}　${esc(r.signingMode)}</li>`).join('')}
             </ul>
-            <span style="font-size:12px; color:#888;">可用「批次設定下一關」工具統一</span></li>`)}
-        ${section('🟠 斷鏈', '#e65100', issues.broken,
-          (i) => `<li>${nameLink(i.roleName, i.recordId, '#e65100')}（${roleLink(i.roleId, i.recordId)}）→ <code>${esc(i.nextRoleId)}</code> 不存在</li>`)}
-        ${section('🟡 空簽核者', '#f57f17', issues.noHolder,
-          (i) => `<li>${nameLink(i.roleName, i.recordId, '#f57f17')}（${roleLink(i.roleId, i.recordId)}）未設定簽核者</li>`)}
-        ${section('🔵 孤立角色', '#1565c0', issues.orphan,
-          (i) => `<li>${nameLink(i.roleName, i.recordId, '#1565c0')}（${roleLink(i.roleId, i.recordId)}）沒有任何角色或員工指向它</li>`)}
-        ${section('⚪ 鏈過深', '#555', issues.noEnd,
-          (i) => `<li>從 ${roleLink(i.startId, i.recordId)} 出發，超過 ${MAX_DEPTH} 層未到終點</li>`)}
+            <span style="font-size:12px; color:#888;">可用「維護 → 批次設定下一關」把它們改成一致</span></li>`)}
+        ${section('🟠 流程中斷（下一關找不到）', '#e65100', issues.broken,
+          (i) => `<li>${nameLink(i.roleName, i.recordId, '#e65100')}（${roleLink(i.roleId, i.recordId)}）的下一關 <code>${esc(i.nextRoleId)}</code> 不存在，簽到這裡就接不下去</li>`)}
+        ${section('🟡 沒有指定簽核者', '#f57f17', issues.noHolder,
+          (i) => `<li>${nameLink(i.roleName, i.recordId, '#f57f17')}（${roleLink(i.roleId, i.recordId)}）沒有指定由誰來簽，單子會卡在這一關</li>`)}
+        ${section('🔵 沒有人會用到的關卡', '#1565c0', issues.orphan,
+          (i) => `<li>${nameLink(i.roleName, i.recordId, '#1565c0')}（${roleLink(i.roleId, i.recordId)}）沒有任何關卡的下一關指向它，也沒有人以它為送單起點</li>`)}
+        ${section('⚪ 關卡太多，走不到終點', '#555', issues.noEnd,
+          (i) => `<li>從 ${roleLink(i.startId, i.recordId)} 出發，連續經過 ${MAX_DEPTH} 關還沒結束，通常代表中間繞了圈</li>`)}
       </div>`;
   };
 
@@ -289,7 +289,7 @@
     id:    'health-check',
     group: 'inspect',
     label: '角色表健檢',
-    hint:  '循環鏈、斷鏈、孤立角色、沒有簽核者的關卡',
+    hint:  '找出繞圈、中斷、沒人用到、沒指定簽核者的關卡',
     apps:  [APP_ID.ROLE_DEFINITION],
     run:   runAndShow,
   });

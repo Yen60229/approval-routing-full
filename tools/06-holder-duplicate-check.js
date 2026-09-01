@@ -351,7 +351,7 @@
   /** 「被指向」欄：鏈上游與員工起點各有幾筆指著它（有數字就不能直接刪） */
   const refCellHtml = (r) => {
     const refs = [];
-    if (r.inboundChain) refs.push(`鏈上游 ${r.inboundChain}`);
+    if (r.inboundChain) refs.push(`上一關 ${r.inboundChain}`);
     if (r.inboundEntry) refs.push(`起點 ${r.inboundEntry}`);
     return refs.length
       ? `<span style="color:#c0392b; font-weight:700;">${esc(refs.join('／'))}</span>`
@@ -432,7 +432,7 @@
                 <table style="${TABLE_CSS} border:1px solid #eee; border-radius:4px;">
                   <thead><tr>
                     <th style="${TH_CSS} width:36px;"></th>
-                    <th style="${TH_CSS}">role_id</th>
+                    <th style="${TH_CSS}">角色代碼</th>
                     <th style="${TH_CSS}">下一關</th>
                     <th style="${TH_CSS}">簽核方式</th>
                     <th style="${TH_CSS}">簽核者</th>
@@ -474,7 +474,7 @@
               <thead><tr>
                 <th style="${TH_CSS} width:36px;"></th>
                 <th style="${TH_CSS}">角色</th>
-                <th style="${TH_CSS}">role_id</th>
+                <th style="${TH_CSS}">角色代碼</th>
                 <th style="${TH_CSS}">下一關</th>
                 <th style="${TH_CSS}">被指向</th>
               </tr></thead>
@@ -487,7 +487,7 @@
       <div style="display:flex; align-items:center; margin-bottom:6px;">
         <h2 style="font-size:18px; margin:0;">簽核者重複檢查</h2>
         <span style="font-size:13px; color:#666; margin-left:12px;">
-          掃描範圍：啟用中且 holder_type =「指定個人」的角色 ${totalRoles} 筆
+          掃描範圍：啟用中、且簽核者設定為「指定個人」的關卡共 ${totalRoles} 筆
         </span>
         <button data-role="close" style="margin-left:auto; font-size:20px; border:none; background:none; cursor:pointer;">✕</button>
       </div>
@@ -508,7 +508,7 @@
           ${multiHolder.length ? `
             <div style="padding:10px 14px; border-top:1px solid #eee; display:flex; align-items:center; gap:12px;">
               <span style="font-size:13px; color:#666;">
-                原記錄留第一個人（role_id 不變，鏈不會斷），其餘每人各建一筆新記錄，沒有人會被移除。
+                原記錄留第一個人（角色代碼不變，簽核流程不會中斷），其餘每人各建一筆新記錄，沒有人會被移除。
               </span>
               <button data-role="split"
                 style="margin-left:auto; white-space:nowrap; font-size:14px; padding:9px 20px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;">
@@ -525,8 +525,8 @@
           ${sameName.length ? `
             <div style="padding:10px 14px; background:#fffdf5; border-bottom:1px solid #f0e6c8; font-size:13px; color:#92400e;">
               勾選要處理的記錄，再選下方的動作。<strong>「被指向」有數字的記錄已鎖住無法勾選</strong>——
-              代表還有簽核鏈或員工起點指著它，直接處理會讓那些流程斷掉；
-              請先用「批次設定下一關」改指向，或到 686 改起點角色，再回來重掃。
+              代表還有別的關卡或員工起點指著它，直接處理會讓那些流程中斷；
+              請先用「維護 → 批次設定下一關」改指向，或到員工起點對照表（686）改起點角色，再回來重掃。
             </div>` : ''}
           ${sec2Html}
         </div>
@@ -538,7 +538,7 @@
           </div>
           ${crossRole.length ? `
             <div style="padding:10px 14px; background:#fafafa; border-bottom:1px solid #eee; font-size:13px; color:#555;">
-              這裡列的是<strong>實際的角色記錄</strong>，點 role_id 可開啟該筆。
+              這裡列的是<strong>實際的角色記錄</strong>，點角色代碼可開啟該筆。
               要移除誤設的兼任，勾選後用下方的動作；<strong>「被指向」有數字的一樣鎖住</strong>，
               請先改指向再處理。
             </div>` : ''}
@@ -677,7 +677,7 @@
         title: `把 ${total} 筆記錄拆成一人一筆？`,
         html:
           `<div style="text-align:left;">` +
-          `會新增 <strong>${added}</strong> 筆角色記錄（role_id 自動流水號），` +
+          `會新增 <strong>${added}</strong> 筆角色記錄（角色代碼自動編號），` +
           `原記錄只留第一個人。<br>` +
           `其他欄位原封沿用，<strong>沒有任何人會被移除</strong>。</div>`,
         width: '620px',
@@ -707,7 +707,7 @@
   const runTool = async () => {
     Swal.fire({
       title: '掃描中…',
-      html: '正在檢查簽核者設定，並比對哪些角色仍被鏈或起點指向',
+      html: '正在檢查簽核者設定，並比對哪些關卡仍被其他關卡或起點指向',
       allowOutsideClick: false,
       didOpen: () => Swal.showLoading(),
     });

@@ -150,7 +150,7 @@
     // 終點角色：不顯示簽核鏈預覽區塊，但保留隱藏 slot 供 04-chain-preview.js 掛載（避免覆蓋卡片）
     const chainSection = isEnd
       ? `<div id="ar-chain-preview-slot" style="display:none;"></div>`
-      : `${sectionTitle('簽核鏈預覽')}
+      : `${sectionTitle('簽核流程預覽')}
           <div id="ar-chain-preview-slot" style="min-height:60px;padding:4px 0 8px;"></div>`;
 
     return `

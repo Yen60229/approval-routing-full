@@ -329,8 +329,8 @@
         peopleCount: r.people.length,
         // exportCsv 用的四個欄位：這一分頁列的是「關卡」，不是人
         code:     r.roleId,
-        name:     r.roleName || `（685 找不到：${r.roleId}）`,
-        jobTitle: r.problem === 'missing' ? '685 沒有這個角色' : '沒有設下一關',
+        name:     r.roleName || `（角色定義表找不到：${r.roleId}）`,
+        jobTitle: r.problem === 'missing' ? '角色定義表沒有這個關卡' : '沒有設下一關',
         units:    [r.unitName],
       }))
       .sort((a, b) => b.peopleCount - a.peopleCount ||
@@ -628,7 +628,7 @@
           ...r,
           code: r.roleId,
           name: r.roleName,
-          jobTitle: inbound ? `${inbound} 條鏈指向` : '',
+          jobTitle: inbound ? `${inbound} 個關卡指向` : '',
           units: [r.unitName || r.roleName.split('_')[0] || UNGROUPED_LABEL],
           inbound,
         };
@@ -907,7 +907,7 @@
       resolved = pairs.map((p) => {
         if (p.roleId) return p;
         const roleId = roleIdByRow.get(p.rowId);
-        if (!roleId) throw new Error(`新建角色後找不到 ${p.code} 對應的 role_id，起點尚未建立`);
+        if (!roleId) throw new Error(`新建關卡後找不到 ${p.code} 對應的角色代碼，起點尚未建立`);
         return { ...p, roleId };
       });
     }
@@ -1490,7 +1490,7 @@
     // 讀不到 685 的下拉選項就不提供就地新建（沒有選項可填，建出來也是壞的）
     const canCreate = Boolean(roleForm?.unitOptions?.length && roleForm?.titleOptions?.length);
     const roleOptionsWithCreate = canCreate
-      ? [{ unit: '新建角色', items: [{ value: CREATE_ROLE_VALUE, label: '＋ 在 685 建立這個角色' }] },
+      ? [{ unit: '新建角色', items: [{ value: CREATE_ROLE_VALUE, label: '＋ 在角色定義表建立這個關卡' }] },
          ...roleOptions]
       : roleOptions;
 
@@ -1534,7 +1534,7 @@
           <th style="padding:8px; text-align:left;">職稱</th>
           <th style="padding:8px; text-align:left; width:150px;">人數 / 成員</th>
           <th style="padding:8px; text-align:left;">起點角色</th>
-          <th style="padding:8px; text-align:left;">下一關（685）</th>
+          <th style="padding:8px; text-align:left;">下一關（角色定義表）</th>
         </tr>
       </thead>
       <tbody></tbody>`;
@@ -1594,7 +1594,7 @@
 
         if (s.createNote) {
           s.createNote.textContent = duplicate
-            ? `685 已經有「${newRoleName}」，請直接從上面的清單選，不要重複建立`
+            ? `角色定義表已經有「${newRoleName}」，請直接從上面的清單選，不要重複建立`
             : (newRoleName
               ? `角色名稱：${newRoleName}　簽核者：這組 ${s.row.members.length} 人各建一筆`
               : '請選擇單位與職稱');
@@ -1638,10 +1638,10 @@
               : '新角色一定要有下一關，請指定（也可以設為終點）';
             break;
           case Boolean(nextValue):
-            s.nextNote.textContent = '這一關在 685 還沒設下一關，會跟起點一起寫入';
+            s.nextNote.textContent = '這一關在角色定義表還沒設下一關，會跟起點一起寫入';
             break;
           default:
-            s.nextNote.textContent = '這一關在 685 還沒設下一關，請一併指定，才能跟起點一起寫入';
+            s.nextNote.textContent = '這一關在角色定義表還沒設下一關，請一併指定，才能跟起點一起寫入';
         }
         s.nextNote.style.color = cycle.cycle ? '#c0392b' : '#92400e';
 
@@ -2072,7 +2072,7 @@
           <th style="padding:8px; text-align:left;">起點角色</th>
           <th style="padding:8px; text-align:left;">問題</th>
           <th style="padding:8px; text-align:right; width:80px;">影響人數</th>
-          <th style="padding:8px; text-align:left;">下一關（685）</th>
+          <th style="padding:8px; text-align:left;">下一關（角色定義表）</th>
         </tr>
       </thead>
       <tbody></tbody>`;
@@ -2188,7 +2188,7 @@
         tdNext.append(combo.el, note);
       } else {
         const hint = document.createElement('span');
-        hint.textContent = `請到 685 補建「${row.roleId}」，或到 686 把這些人改指到現有角色`;
+        hint.textContent = `請到角色定義表補建「${row.roleId}」，或到員工起點對照表把這些人改指到現有的關卡`;
         hint.style.cssText = 'color:#991b1b; font-size:13px;';
         tdNext.appendChild(hint);
       }
@@ -2202,7 +2202,7 @@
     if (!rows.length) {
       tbody.innerHTML =
         '<tr><td colspan="5" style="padding:16px; color:#999; text-align:center;">' +
-        '已設定的起點角色在 685 都有對應的角色與下一關</td></tr>';
+        '已設定的起點角色在角色定義表都有對應的關卡與下一關</td></tr>';
     }
 
     toolbar.querySelector('[data-role="search"]').addEventListener('input', refresh);
@@ -2410,14 +2410,14 @@
         const newRoleRecords = newRoles.reduce((n, r) => n + r.memberCodes.length, 0);
         const newRoleNote = newRoles.length
           ? `<div style="margin-top:10px; color:#1e40af; font-weight:600;">` +
-            `其中 <strong>${newRoles.length}</strong> 個關卡在 685 還不存在，會一併建立` +
+            `其中 <strong>${newRoles.length}</strong> 個關卡在角色定義表還不存在，會一併建立` +
             `（共 <strong>${newRoleRecords}</strong> 筆角色記錄，一人一筆，簽核者就是這組同仁）。<br>` +
             `起點會指到這一關最先建立的那一筆，與既有角色的取法一致。</div>`
           : '';
 
         // 這次動作會同時改到 685 與 686 兩張表，確認視窗要講清楚改了什麼
         const nextNote = nextUpdates.length
-          ? `<div style="margin-top:10px; color:#1a6ea8; font-weight:600;">其中 ${assignments.length} 個關卡在 685 還沒設下一關，` +
+          ? `<div style="margin-top:10px; color:#1a6ea8; font-weight:600;">其中 ${assignments.length} 個關卡在角色定義表還沒設下一關，` +
             `會在同一次動作裡一併補上（共 ${nextUpdates.length} 筆角色記錄）。</div>`
           : '';
 
@@ -2462,9 +2462,9 @@
       note.style.cssText =
         'background:#fff3cd; border:1px solid #f0c36d; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px;';
       note.innerHTML =
-        '<strong>讀不到角色定義表（685）的欄位設定，「＋ 在 685 建立這個角色」暫時不會出現</strong>：' +
+        '<strong>讀不到角色定義表（685）的欄位設定，「＋ 在角色定義表建立這個關卡」暫時不會出現</strong>：' +
         `${esc(model.roleForm.error)}<br>` +
-        '請確認執行者對 685 有存取權。這只影響就地新建角色，其餘功能不受影響。';
+        '請確認執行者對角色定義表有存取權。這只影響就地新建關卡，其餘功能不受影響。';
       tabA.prepend(note);
     }
 
@@ -2497,7 +2497,7 @@
               `建議先用「批次設定下一關」統一。</div>`) +
             (hasNext ? '' :
               `<div style="margin-top:8px; color:#c0392b; font-weight:700;">` +
-              `注意：這一關在 685 沒有設下一關、也沒有勾終點，新記錄會沿用同樣的空白設定。` +
+              `注意：這一關在角色定義表沒有設下一關、也沒有勾終點，新記錄會沿用同樣的空白設定。` +
               `之後若有人以它為起點，送單會卡在這一關——請接著用「批次設定下一關」補上。</div>`) +
             `</div>`,
           width: '620px',
@@ -2605,7 +2605,7 @@
       users: model.emptyRoles,
       nameLabel: '角色名稱',
       codeLabel: '角色代碼',
-      titleLabel: '鏈上游',
+      titleLabel: '上一關',
       groupLabel: '單位',
       actionLabel: '取消啟用中',
       onAction: async (codes) => {
@@ -2616,7 +2616,7 @@
         const linked = targets.filter((r) => r.inbound > 0);
         const linkedHtml = linked.length
           ? `<div style="color:#c0392b; font-weight:bold; margin-top:10px; text-align:left;">
-               注意：以下角色是別條簽核鏈的中繼站，停用後那些鏈會直接建立失敗（送單時就會被擋下來）：<br>
+               注意：以下關卡是別人簽核流程的其中一站，停用後那些流程會直接建立失敗（送單時就會被擋下來）：<br>
                ${esc(linked.map((r) => `${r.name}（${r.inbound} 條）`).join('、'))}<br>
                請一併把上游角色的「下一關」改指到別處。
              </div>`
@@ -2647,7 +2647,7 @@
       onExport: (rows) => exportCsv(
         rows,
         `角色沒有簽核者_${new Date().toISOString().slice(0, 10)}.csv`,
-        { code: '角色代碼', name: '角色名稱', title: '鏈上游', group: '單位' },
+        { code: '角色代碼', name: '角色名稱', title: '上一關', group: '單位' },
       ),
     });
 
@@ -2709,12 +2709,12 @@
     tabGNote.style.cssText =
       'background:#fff3cd; border:1px solid #f0c36d; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px;';
     tabGNote.innerHTML =
-      '<strong>這些同仁在 686 已經設好起點，685 那一關卻還沒設完整</strong>，送單時會卡在建立簽核鏈。<br>' +
+      '<strong>這些同仁在員工起點對照表已經設好起點，角色定義表那一關卻還沒設完整</strong>，送單時會卡在產生簽核流程。<br>' +
       '<span style="color:#92400e; font-weight:700;">沒有設下一關</span>：選好下一關後勾起來，' +
-      '按下方按鈕批量補進 685；同名角色是同一關，補設會一起寫進該關卡的每一筆記錄。<br>' +
-      '<span style="color:#991b1b; font-weight:700;">685 沒有這個角色</span>：整列紅底、勾不動。' +
+      '按下方按鈕批量補進角色定義表；同名關卡視為同一關，補設會一起寫進該關卡的每一筆記錄。<br>' +
+      '<span style="color:#991b1b; font-weight:700;">角色定義表沒有這個關卡</span>：整列紅底、勾不動。' +
       '新建角色要決定簽核者、單位與職稱，本工具不代勞——請用「批量建立角色」補建，' +
-      '或到 686 把這些人的起點改指到現有的角色。<br>' +
+      '或到員工起點對照表把這些人的起點改指到現有的關卡。<br>' +
       '帳號已停用的人不列在這裡，那是 C 分頁的範圍。';
     tabG.prepend(tabGNote);
 
@@ -2723,8 +2723,8 @@
       'background:#fff3cd; border:1px solid #f0c36d; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px;';
     tabFNote.innerHTML =
       '<strong>這些角色是「指定個人」，卻沒有指定任何簽核者</strong>，流程跑到這一關沒有人能簽。<br>' +
-      '「鏈上游」是有幾個角色的「下一關」指向它——有數字的請先改掉上游指向，' +
-      '再停用；否則那些人送單會在建立簽核鏈時就被擋下（訊息：角色不存在或未啟用）。<br>' +
+      '「上一關」是有幾個關卡的「下一關」指向它——有數字的請先改掉那些關卡的指向，' +
+      '再停用；否則那些人送單會在產生簽核流程時就被擋下（訊息：角色不存在或未啟用）。<br>' +
       '若這一關其實還需要，請改到 B 分頁把人指派進去，不要停用。';
     tabF.prepend(tabFNote);
 
@@ -2751,13 +2751,13 @@
 
     // ── 分頁切換 ──
     const tabs = [
-      { key: 'A', label: `A. 未設定起點（${model.noEntry.length} 人）`, el: tabA, hint: '686 沒有記錄、或有記錄卻沒填起點角色的人，兩種都送不出單' },
+      { key: 'A', label: `A. 未設定起點（${model.noEntry.length} 人）`, el: tabA, hint: '員工起點對照表沒有記錄、或有記錄卻沒填起點角色的人，兩種都送不出單' },
       { key: 'B', label: `B. 不具簽核身分（${model.noHolder.length} 人）`, el: tabB, hint: '多數基層同仁本來就不簽核，此區用於確認主管沒被漏掉' },
       { key: 'C', label: `C. 已停用仍有起點（${model.staleEntries.length} 人）`, el: tabC, hint: '帳號已停用但起點記錄仍啟用中，建議停用避免誤導' },
       { key: 'D', label: `D. 已停用仍是簽核者（${model.staleHolders.length} 人）`, el: tabD, hint: '帳號已停用卻仍是簽核者，流程跑到該關會卡住；本區只會取消該角色的「啟用中」，不會動簽核者名單' },
       { key: 'E', label: `E. 姓名格式異常（${model.oddNames.length} 人）`, el: tabE, hint: '姓名未同時具備中文與英文，多為系統／測試／整合帳號或姓名未補齊；已自 A～D 排除，僅供人工確認' },
       { key: 'F', label: `F. 角色沒有簽核者（${model.emptyRoles.length} 筆）`, el: tabF, hint: '啟用中、指定個人、卻沒有指定任何簽核者的角色，流程跑到這關會卡死' },
-      { key: 'G', label: `G. 起點角色設定不完整（${model.brokenEntries.length} 個關卡）`, el: tabG, hint: '686 已設起點、685 卻缺角色或缺下一關，這些人送單會失敗' },
+      { key: 'G', label: `G. 起點角色設定不完整（${model.brokenEntries.length} 個關卡）`, el: tabG, hint: '員工起點對照表已設起點、角色定義表卻缺關卡或缺下一關，這些人送單會失敗' },
     ];
     const switchTo = (key) => {
       bodyEl.innerHTML = '';
@@ -2812,7 +2812,7 @@
     id:    'coverage-check',
     group: 'inspect',
     label: '未設定名單',
-    hint:  '沒起點、沒簽核身分、停用帳號殘留…七類問題',
+    hint:  '找出送不出單、沒簽核身分、停用帳號殘留…等七類問題',
     apps:  [APP_ID.ROLE_DEFINITION, APP_ID.EMPLOYEE_ENTRY],
     run:   runTool,
   });

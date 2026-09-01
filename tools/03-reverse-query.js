@@ -167,7 +167,7 @@
     ).join('');
 
     const applicantList = applicants.length === 0
-      ? '<div style="color:#999; margin-top:8px;">目前沒有員工的簽核鏈會經過此人。</div>'
+      ? '<div style="color:#999; margin-top:8px;">目前沒有任何人送單時會簽到這個人。</div>'
       : `<ul style="margin:0; padding-left:20px; line-height:1.8; font-size:13px;">
            ${applicants.map((a) =>
              `<li><strong>${a.employeeCode}</strong> → 經過「${a.hitRoleName}」</li>`
@@ -196,10 +196,10 @@
 
   const runAndShow = async () => {
     const { value: targetCode, isConfirmed } = await Swal.fire({
-      title: '反向查詢',
+      title: '誰會簽到這個人',
       html: `
         <div style="text-align:left; margin-bottom:8px; font-size:14px; color:#555;">
-          輸入員工的 kintone 使用者代碼，查詢哪些申請人的簽核鏈會經過此人。
+          輸入員工的登入帳號，查哪些人送出申請時會簽到這個人。
         </div>
         <input id="ar-rv-input" class="swal2-input" placeholder="例：yamada.taro"
                style="font-size:15px;" />
@@ -232,8 +232,8 @@
   window.ApprovalRouting.ToolRegistry.register({
     id:    'reverse-query',
     group: 'query',
-    label: '反向查詢',
-    hint:  '查「哪些員工的簽核鏈會經過某個人」',
+    label: '誰會簽到這個人',
+    hint:  '指定一個人，查有哪些同仁送單時會簽到他',
     apps:  [APP_ID.EMPLOYEE_ENTRY],
     run:   runAndShow,
   });

@@ -36,7 +36,7 @@
   // -------------------------------------------------------------------
 
   const renderChainResult = (chain) => {
-    if (chain.length === 0) return '<div style="color:#999;">（空鏈）</div>';
+    if (chain.length === 0) return '<div style="color:#999;">（這個人沒有任何簽核關卡）</div>';
 
     return chain.map((step) => {
       // 子表格列格式 { value: { 欄位代碼: { type, value } } }（2026-09-01 assembleChainStep 改版，
@@ -81,10 +81,10 @@
     // 這樣打「山田」或打「yamada」都篩得到，不必額外改共用元件的搜尋邏輯。
     let picked = null;
     const { isConfirmed } = await Swal.fire({
-      title: '簽核鏈模擬器',
+      title: '簽核流程模擬器',
       html: `
         <div style="text-align:left; margin-bottom:8px; font-size:14px; color:#555;">
-          輸入姓名或帳號的部分字元搜尋，選一個人模擬其送單後的簽核鏈。
+          輸入姓名或帳號的部分字，選一個人看看他送出申請後會經過哪些關卡。
         </div>
         <div id="ar-sim-picker-slot"></div>
       `,
@@ -126,7 +126,7 @@
     if (!ok) {
       await Swal.fire({
         icon: 'error',
-        title: '模擬失敗',
+        title: '無法模擬',
         text: error,
         confirmButtonText: '關閉',
       });
@@ -134,7 +134,7 @@
     }
 
     await Swal.fire({
-      title: `${picked.name} 的簽核鏈（共 ${chain.length} 關）`,
+      title: `${picked.name} 的簽核流程（共 ${chain.length} 關）`,
       html: `<div style="text-align:left; max-height:420px; overflow-y:auto; padding:8px 4px;">
                ${renderChainResult(chain)}
              </div>`,
@@ -152,7 +152,7 @@
     id:    'simulator',
     group: 'query',
     label: '模擬器',
-    hint:  '搜姓名或帳號選一個人，預覽他送單後的完整簽核鏈',
+    hint:  '選一個人，看他送出申請後會經過哪些關卡',
     apps:  [APP_ID.ROLE_DEFINITION, APP_ID.EMPLOYEE_ENTRY],
     run:   runSimulator,
   });

@@ -465,7 +465,7 @@
     },
     broken: {
       dotBg: '#ef4444', dotBorder: '#dc2626', titleColor: '#b91c1c', pulseClass: '',
-      badge: '<span style="background:#fee2e2;color:#b91c1c;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;">斷鏈</span>',
+      badge: '<span style="background:#fee2e2;color:#b91c1c;font-size:11px;padding:2px 8px;border-radius:12px;margin-left:8px;font-weight:600;">中斷</span>',
     },
   });
 
@@ -839,7 +839,7 @@
       } catch { /* detail 頁必為已存在記錄 → 忽略 */ }
 
       return isUnsaved
-        ? '<div style="color:#999; padding:12px;">儲存後即可預覽簽核鏈</div>'
+        ? '<div style="color:#999; padding:12px;">儲存後即可預覽簽核流程</div>'
         : '<div style="color: #999; padding: 12px;">找不到此角色的資料，請確認是否已啟用。</div>';
     }
 
@@ -911,7 +911,7 @@
   const renderChainPreview = async (currentRoleId) => {
     if (!currentRoleId) {
       mountPreview(
-        '<div style="color:#999; padding:12px;">儲存後即可預覽簽核鏈</div>',
+        '<div style="color:#999; padding:12px;">儲存後即可預覽簽核流程</div>',
       );
       return;
     }
@@ -972,7 +972,7 @@
     safeHandler(async (event) => {
       setTimeout(() => {
         mountPreview(
-          '<div style="color:#999; padding:12px;">儲存後即可預覽簽核鏈</div>',
+          '<div style="color:#999; padding:12px;">儲存後即可預覽簽核流程</div>',
         );
       }, 0);
       return event;

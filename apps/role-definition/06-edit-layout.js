@@ -71,7 +71,7 @@
       // 往上找到可插入的層級（space 本身的 parent 通常是 row/cell level）
       const rowEl = spaceEl.parentElement;
       if (rowEl) {
-        rowEl.insertAdjacentElement('beforebegin', makeSectionEl('簽核鏈 & 下一關設定'));
+        rowEl.insertAdjacentElement('beforebegin', makeSectionEl('簽核流程 & 下一關設定'));
       }
     }
   };

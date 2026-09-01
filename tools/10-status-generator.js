@@ -573,7 +573,7 @@
     id:    'status-generator',
     group: 'deploy',
     label: '部署流程設定',
-    hint:  '產生並部署申請 App 的 7 狀態流程圖',
+    hint:  '把統一的簽核流程設定寫進申請表單',
     apps:  [APP_ID.FORM_ROUTE_CONFIG],
     run:   async () => {
       await ensureFresh();   // 這是部署不是預覽，快取一律重讀

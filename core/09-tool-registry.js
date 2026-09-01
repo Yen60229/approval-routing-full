@@ -33,10 +33,10 @@
   const CONTAINER_ID = 'ar-toolbar';
 
   const GROUPS = Object.freeze([
-    Object.freeze({ key: 'inspect',  label: '系統健檢', color: '#8e44ad', hint: '掃出問題並就地修正' }),
-    Object.freeze({ key: 'query',    label: '查詢', color: '#2980b9', hint: '唯讀，不會寫入任何資料' }),
-    Object.freeze({ key: 'maintain', label: '維護', color: '#16a085', hint: '大量建立或修改設定' }),
-    Object.freeze({ key: 'deploy',   label: '部署', color: '#b45309', hint: '寫入申請 App 的流程設定' }),
+    Object.freeze({ key: 'inspect',  label: '系統健檢', color: '#8e44ad', hint: '找出設定有問題的地方，並直接修正' }),
+    Object.freeze({ key: 'query',    label: '查詢', color: '#2980b9', hint: '只查看，不會改到任何資料' }),
+    Object.freeze({ key: 'maintain', label: '維護', color: '#16a085', hint: '一次建立或修改大量設定' }),
+    Object.freeze({ key: 'deploy',   label: '部署', color: '#b45309', hint: '把簽核流程設定寫進申請表單' }),
   ]);
 
   const GROUP_KEYS = new Set(GROUPS.map((g) => g.key));

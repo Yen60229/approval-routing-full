@@ -1348,11 +1348,11 @@
             <thead>
               <tr>
                 <th style="width:30%;">人員</th>
-                <th style="width:13%;">unit_name</th>
-                <th style="width:11%;">title_level</th>
-                <th style="width:11%;">holder_type</th>
-                <th style="width:17%;">holder</th>
-                <th style="width:10%;">role_name 預覽</th>
+                <th style="width:13%;">單位</th>
+                <th style="width:11%;">職稱</th>
+                <th style="width:11%;">簽核者類型</th>
+                <th style="width:17%;">簽核者</th>
+                <th style="width:10%;">關卡名稱預覽</th>
                 <th style="width:5%;"></th>
               </tr>
             </thead>
@@ -2008,7 +2008,7 @@
       resp = await kintone.api(kintone.api.url('/k/v1/records.json', true), 'GET', params);
     } catch (error) {
       console.error('[batch-role-creator] fetchMaxRoleNum records API error', { params, error });
-      throw new Error(`讀取既有 role_id 失敗：${formatKintoneError(error)}。已改用與 01-role-form-init.js 相同的查詢格式，若仍失敗，請檢查 App 685 是否有「未套用表單變更」或 role_id 是否可用於排序。`);
+      throw new Error(`讀取既有角色代碼失敗：${formatKintoneError(error)}。已改用與 01-role-form-init.js 相同的查詢格式，若仍失敗，請檢查 App 685 是否有「未套用表單變更」或 role_id 是否可用於排序。`);
     }
     const batch = Array.isArray(resp.records) ? resp.records : [];
     batch.forEach((r) => {
@@ -2356,7 +2356,7 @@
       maxNum = await fetchMaxRoleNum();
     } catch (err) {
       console.error('[batch-role-creator] fetchMaxRoleNum error', err);
-      showStatus(statusId, 'error', err.message || '讀取既有 role_id 失敗，已停止建立，避免產生重複角色代碼。');
+      showStatus(statusId, 'error', err.message || '讀取既有角色代碼失敗，已停止建立，避免產生重複的代碼。');
       btn.disabled = false;
       btn.textContent = '建立角色記錄';
       return;
