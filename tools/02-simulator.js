@@ -32,10 +32,13 @@
     if (chain.length === 0) return '<div style="color:#999;">（空鏈）</div>';
 
     return chain.map((step) => {
-      const stepNo   = step[CF.STEP_NO].value;
-      const roleName = step[CF.STEP_NAME].value;
-      const roleId   = step[CF.ROLE_ID].value;
-      const signers  = step[CF.EXPECTED_SIGNERS].value.map((u) => u.code).join('、') || '（未設定）';
+      // 子表格列格式 { value: { 欄位代碼: { type, value } } }（2026-09-01 assembleChainStep 改版，
+      // 見 core/03-chain-builder.js）；adapter 一直是照這個格式讀的，這裡原本沒跟著改
+      const row      = step.value;
+      const stepNo   = row[CF.STEP_NO].value;
+      const roleName = row[CF.STEP_NAME].value;
+      const roleId   = row[CF.ROLE_ID].value;
+      const signers  = row[CF.EXPECTED_SIGNERS].value.map((u) => u.code).join('、') || '（未設定）';
 
       return `
         <div style="display:flex; align-items:flex-start; margin-bottom:12px;">
