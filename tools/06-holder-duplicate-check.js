@@ -1,7 +1,7 @@
 /**
  * 簽核者重複檢查（kintone App 685）— holder_type =「指定個人」的 holder_user 重複偵測
  *
- * 【前提規則】一筆角色記錄只掛一個人（見 docs/對話脈絡.md §9.5）。
+ * 【前提規則】一筆角色記錄只掛一個人（見 docs/對話脈絡.md §6.3）。
  * 因此同一關有 N 個簽核者 = N 筆同名記錄，**同名多筆本身是正常的**。
  *
  * 在角色定義表列表頁的「體檢」選單提供「簽核者重複檢查」，掃描所有**啟用中**且
@@ -48,6 +48,7 @@
  *                             勾選狀態不同步、導致刪錯筆的問題
  *   2026-08-27  Jimmy/Claude  ③ 區由純檢視改為逐筆對應到實際記錄並可勾選刪除／停用，
  *                             沿用②的被指向鎖定；動作列移到面板底部，②③ 共用勾選集合
+ *   2026-10-28  Jimmy/Claude  ① 拆分新建的記錄不再寫 role_name（計算欄位不能登錄值）
  */
 (() => {
   'use strict';
@@ -297,7 +298,7 @@
     let seq = await nextRoleSeq();
     const creates = targets.flatMap((r) => r.uniqueCodes.slice(1).map((code) => ({
       [RF.ROLE_ID]:      { value: `${ROLE_ID_PREFIX}${String(seq++).padStart(4, '0')}` },
-      [RF.ROLE_NAME]:    { value: r.roleName },
+      // role_name 是計算欄位，由 unit_name + title_level 自動組出，不寫入
       [RF.UNIT_NAME]:    { value: r.unitName },
       [RF.TITLE_LEVEL]:  { value: r.titleLevel },
       [RF.HOLDER_TYPE]:  { value: HT.USER },

@@ -34,6 +34,8 @@
  *   2026-09-01  Jimmy/Claude  視窗加上永遠可見的關閉鈕（×）與 Esc 關閉。原本的「關閉」按鈕在
  *                              「卡片分組」區塊裡，而那一區在匯入 CSV 前是 display:none——
  *                              還沒匯資料時視窗根本關不掉
+ *   2026-10-28  Jimmy/Claude  新增記錄不再帶 role_name。它在 06-02 改成計算欄位，
+ *                              官方文件載明計算欄位不能登錄值，帶了會讓整筆建不起來
  */
 (function () {
   'use strict';
@@ -2089,12 +2091,8 @@
     const signingMode = row.dataset.signingMode ||
       (signingSelect ? signingSelect.value : '任一人簽');
 
-    // role_name = unit_name_title_level（與預覽欄一致）
-    const roleName =
-      unitName && titleLevel ? `${unitName}_${titleLevel}` : unitName || titleLevel || '';
-
+    // role_name 是計算欄位（unit_name + title_level），kintone 不接受寫入，這裡不帶
     const record = {
-      role_name:    { value: roleName },
       unit_name:    { value: unitName },
       title_level:  { value: titleLevel },
       holder_type:  { value: holderType },

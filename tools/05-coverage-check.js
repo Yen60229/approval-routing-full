@@ -112,11 +112,12 @@
  *   2026-08-20  Jimmy/Claude  A 區可就地新建 685 角色：配不到現有角色的列，角色清單最前面
  *                             多一個「＋ 在 685 建立這個角色」，選了就地填 unit_name /
  *                             title_level（依組織與職務自動帶入、可手改），送出時先建角色
- *                             再寫起點。一關有幾個人就建幾筆同名記錄各掛一人（§9.5），
+ *                             再寫起點。一關有幾個人就建幾筆同名記錄各掛一人（§6.3），
  *                             起點指到最先建立的那一筆（與 matchEntryRole 同規則）。
  *                             選到的單位＋職稱若已經有角色會擋下來，請他直接從清單選。
  *                             role_name 目前是計算欄位、不寫入；萬一哪天改回文字欄位，
  *                             分隔符號從既有記錄反推，不像 tools/04 那樣寫死在程式裡
+ *   2026-10-28  Jimmy/Claude  B 區新建角色不再寫 role_name（計算欄位不能登錄值）
  */
 (() => {
   'use strict';
@@ -367,7 +368,7 @@
   /**
    * 組出要新建的 685 角色記錄
    *
-   * 同一關有幾個人就建幾筆同名記錄，各掛一人（見 docs/對話脈絡.md §9.5：
+   * 同一關有幾個人就建幾筆同名記錄，各掛一人（見 docs/對話脈絡.md §6.3：
    * holder_user 一筆只掛一個人）。role_id 由呼叫端給的流水號起點往下編。
    *
    * 起點（686）一律指到這一關「最先建立」的那一筆，與 matchEntryRole 取記錄編號
@@ -800,7 +801,7 @@
     let seq = await nextRoleSeq();
     const records = userCodes.map((code) => ({
       [RF.ROLE_ID]:      { value: `${ROLE_ID_PREFIX}${String(seq++).padStart(4, '0')}` },
-      [RF.ROLE_NAME]:    { value: roleName },
+      // role_name 是計算欄位，由 unit_name + title_level 自動組出，不寫入
       [RF.UNIT_NAME]:    { value: tpl.unitName },
       [RF.TITLE_LEVEL]:  { value: tpl.titleLevel },
       [RF.HOLDER_TYPE]:  { value: HT.USER },

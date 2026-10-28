@@ -30,9 +30,7 @@
   const APP_ID = Object.freeze({
     ROLE_DEFINITION: 685,  // 簽核角色定義表
     EMPLOYEE_ENTRY: 686,   // 員工起點對照表
-    // ⚠️ 待 Jimmy 依 docs/02 App 3 規格手動建立 form_route_config 後回填真實 App ID。
-    //    在此之前 0 只是佔位符（沿用專案慣例）；尚無 adapter 掛載，不影響現有功能。
-    FORM_ROUTE_CONFIG: 736,  // 表單路由設定表（P8）
+    FORM_ROUTE_CONFIG: 736,  // 表單路由設定表（P8，2026-09-01 建立）
   });
 
   /** 角色定義表欄位代碼 */

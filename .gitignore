@@ -39,3 +39,6 @@ customize-manifest.json
 # 本機工具 / 暫存檔（不納入版控）
 .claude/launch.json
 preview-mockup.html
+
+# Claude Code 的工作樹（本機用，不納入版控）
+.claude/worktrees/
