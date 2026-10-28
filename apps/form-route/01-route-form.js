@@ -79,7 +79,7 @@
       const id = r[RF.ROLE_ID].value;
       const name = r[RF.ROLE_NAME].value;
       nameById.set(id, name);
-      if (seen.has(name)) continue; // 完整 role_name 去重（同名＝同一關，見對話脈絡 §9.2）
+      if (seen.has(name)) continue; // 完整 role_name 去重（同名＝同一關，見對話脈絡 §6.2）
       seen.add(name);
       options.push({ id, name, group: r[RF.UNIT_NAME]?.value || UNGROUPED_LABEL });
     }

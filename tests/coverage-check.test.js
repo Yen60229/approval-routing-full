@@ -487,7 +487,7 @@ describe('buildNewRoleRecords', () => {
     memberCodes: ['u1', 'u2'], nextValue: 'ROLE_0200',
   };
 
-  it('一人一筆同名記錄，role_id 連號（見 §9.5 holder_user 一筆只掛一人）', () => {
+  it('一人一筆同名記錄，role_id 連號（見 §6.3 holder_user 一筆只掛一人）', () => {
     const { records, roleIdByRow } = Internals().buildNewRoleRecords([spec], 31);
     expect(records).toHaveLength(2);
     expect(records.map((r) => r.role_id.value)).toEqual(['ROLE_0031', 'ROLE_0032']);

@@ -1,30 +1,31 @@
-# apps/ — 各 App 專屬 JS
+# apps/　各 App 專用的 JS
 
-每個 App 有獨立資料夾,檔名前綴數字表示載入順序。
+一個 App 一個資料夾，檔名前面的數字就是載入順序。上傳時先放 `core/`，再放這裡的檔案。
+各 App 完整的上傳順序以 `docs/10-工具按鈕盤點與分組.md` 第四節為準。
 
-## role-definition/ — 角色定義表
+## role-definition/　685 角色定義表
 
-| 檔案 | 用途 |
-|------|------|
-| `01-role-form-init.js` | 自動產生 role_id |
-| `02-field-display.js` | holder_type 條件顯示 |
-| `03-next-role-dropdown.js` | next_role_id 下拉 UI |
-| `04-chain-preview.js` | 鏈視覺化卡片 |
+| 檔案 | 做什麼 |
+|------|--------|
+| `01-role-form-init.js` | 新增時自動產生角色代碼，代碼欄位不給 HR 看 |
+| `02-field-display.js` | 依「簽核者類型」顯示群組或個人欄位，存檔前清掉沒用到的那一個 |
+| `03-next-role-dropdown.js` | 「下一關」的搜尋下拉，依單位分組 |
+| `04-chain-preview.js` | 簽核流程預覽，看得到上游和下游 |
+| `05-detail-card.js` | 詳情頁改成卡片樣式 |
+| `06-edit-layout.js` | 編輯頁放寬版面、加分區標題 |
+| `07-role-name-selector.js` | 詳情頁隱藏單位、職稱欄位；送出時檢查兩個都要填 |
 
-## employee-entry/ — 員工起點對照表
+## employee-entry/　686 員工起點對照表
 
-| 檔案 | 用途 |
-|------|------|
-| `01-entry-form-init.js` | 表單初始化 |
-| `02-batch-import.js` | CSV 批量匯入 |
+| 檔案 | 做什麼 |
+|------|--------|
+| `01-entry-form-init.js` | 「起點角色」的搜尋下拉和檢查 |
+| `02-batch-import.js` | CSV 批量匯入，可以先試跑看結果再寫入 |
 
-## 載入順序(kintone 後台設定時)
+## form-route/　736 表單路由設定表
 
-每個 App 的 JavaScript/CSS 自訂設定頁,按以下順序加入檔案:
+| 檔案 | 做什麼 |
+|------|--------|
+| `01-route-form.js` | 編輯畫面：依段類型淡化不相關的欄位、指定角色用搜尋下拉、送出前檢查設定 |
 
-1. `core/05-vendor.js` (SweetAlert2)
-2. `core/04-utils.js`
-3. `core/01-config.js`
-4. `core/02-api-client.js` (P4 之後)
-5. `core/03-chain-builder.js` (P4 之後)
-6. 該 App 的 `apps/xxx/01-*.js`, `02-*.js` ...依序
+新增 JS 檔時，這份表和 `docs/10` 的上傳順序要一起改。
