@@ -13,7 +13,9 @@
  *            新建該角色（一人一筆同名記錄，簽核者就是這組同仁），不必先跑 tools/04；
  *            兼任多單位／多職稱／資料不全者另立一區逐人手選，兩區互斥不會重複建）
  *   B. 不具簽核身分 — 使用中、但不在任何角色的 holder_user、也不在任何簽核群組的人
- *        → 勾選多人 + 選一個「指定個人」角色 → **每人各建一筆新的同名角色記錄**
+ *        → 一人一列，各自帶入「他自己那一關」（先比單位＋職稱，配不到再用 686 的起點），
+ *          可逐列改、可用「批次指定」填滿空白列 → 勾選後一次送出，
+ *          **每人各建一筆新的同名角色記錄**（每個人可以加入不同的角色）
  *          （holder_user 一筆只掛一個人，所以同一關有幾個簽核者就有幾筆同名記錄；
  *            新記錄的下一關等設定沿用記錄編號最小的那筆同名記錄；
  *            既有記錄一概不動；群組型角色的成員仍由 IT 在 cybozu 後台維護）
@@ -118,6 +120,14 @@
  *                             role_name 目前是計算欄位、不寫入；萬一哪天改回文字欄位，
  *                             分隔符號從既有記錄反推，不像 tools/04 那樣寫死在程式裡
  *   2026-10-28  Jimmy/Claude  B 區新建角色不再寫 role_name（計算欄位不能登錄值）
+ *   2026-10-28  Jimmy/Claude  B 區改為一人一列各自帶入角色：原本一次只能選一個角色，
+ *                             散在各單位的人要一個單位做一輪。改成依單位＋職稱（配不到再看
+ *                             686 起點）自動帶入他自己那一關，可逐列改或「批次指定」填滿
+ *                             空白列，勾好一次送出（matchHolderRole / planHolderRecords）。
+ *                             B/C/D/F 的確認視窗改列出逐筆明細；寫入改走 sendInChunks——
+ *                             某一批失敗不擋後面的批次，結果視窗講清楚成功幾筆、失敗幾筆
+ *                             （kintone 一批整批成功或失敗，失敗的批次重新掃描後仍在清單上）。
+ *                             A/G 有先後順序，仍維持遇錯即停
  */
 (() => {
   'use strict';
@@ -647,6 +657,12 @@
       roles:       roleCoverage.roles,
     });
 
+    // 帳號 → 686 起點角色（同一人多筆時取第一筆有填的）
+    const entryRoleIdByCode = new Map();
+    for (const e of entryData.entries) {
+      if (e.roleId && !entryRoleIdByCode.has(e.code)) entryRoleIdByCode.set(e.code, e.roleId);
+    }
+
     // 簽核群組內的停用帳號：工具無法改群組成員，列為提醒請 IT 處理
     const inactiveNameByCode = new Map(inactives.map((u) => [u.code, u.name]));
     const groupWarnings = [];
@@ -669,7 +685,10 @@
           ...decorate(u),
           entryRecordIds: entryData.blankRecordIdsByCode.get(u.code) || [],
         })),
-      noHolder: normalActives.filter((u) => !roleCoverage.holderCodes.has(u.code)).map(decorate),
+      // entryRoleId：B 區配不到單位＋職稱時，退而用他在 686 的起點角色當預設
+      noHolder: normalActives
+        .filter((u) => !roleCoverage.holderCodes.has(u.code))
+        .map((u) => ({ ...decorate(u), entryRoleId: entryRoleIdByCode.get(u.code) || '' })),
       staleEntries,
       staleHolders,
       oddNames,
@@ -789,50 +808,112 @@
   };
 
   /**
-   * B 區：一人建一筆新的角色記錄
+   * 分批送出彼此獨立的寫入（每批 ≤ WRITE_BATCH），某一批失敗不擋後面的批次
+   *
+   * kintone 的 records API 一批是整批成功或整批失敗，所以以「批」為單位計數：
+   * 失敗那批一筆都沒寫進去，重新掃描後還會留在清單上，再勾一次就好。
+   * 只給 B/C/D/F 這種每筆互不相干的寫入用；A 區 685→686 有先後順序，仍走遇錯即停。
+   *
+   * @returns {Promise<{ok: number, failed: number, errors: string[]}>}
+   */
+  const sendInChunks = async (app, method, records) => {
+    const result = { ok: 0, failed: 0, errors: [] };
+    for (const part of chunk(records, CONFIG.WRITE_BATCH)) {
+      try {
+        await kintoneApi('/k/v1/records.json', method, { app, records: part });
+        result.ok += part.length;
+      } catch (err) {
+        console.error('[ApprovalRouting] 涵蓋率檢查分批寫入失敗', err);
+        result.failed += part.length;
+        result.errors.push(err?.message || String(err));
+      }
+    }
+    return result;
+  };
+
+  /**
+   * B 區：替一個人找「他自己那一關」當預設要加入的角色
+   *
+   * 先比單位＋職稱（與 A 區 matchEntryRole 同一套規則：員工的起點就是他自己那一關），
+   * 兼任多單位／多職稱或配不到時，再看他在 686 填的起點角色。兩者都沒有就回 null，
+   * 讓 HR 自己挑——不做模糊比對。
+   *
+   * 只配「指定個人」的角色：群組型角色的成員由 IT 在 cybozu 後台維護，工具加不進去。
+   *
+   * @param {{units?: string[], jobTitle?: string, entryRoleId?: string}} user
+   * @returns {{roleName: string, source: 'unit'|'entry'}|null}
+   */
+  const matchHolderRole = (user, roles) => {
+    const userRoles = roles.filter((r) => r.holderType === HT.USER);
+    const units = user.units || [];
+    const title = (user.jobTitle || '').trim();
+    if (units.length === 1 && units[0] !== UNGROUPED_LABEL && title && !title.includes('、')) {
+      const hit = matchEntryRole(units[0], title, userRoles);
+      if (hit) return { roleName: hit.roleName, source: 'unit' };
+    }
+    const entry = user.entryRoleId && userRoles.find((r) => r.roleId === user.entryRoleId);
+    return entry ? { roleName: entry.roleName, source: 'entry' } : null;
+  };
+
+  /**
+   * B 區：把「誰 → 加入哪個角色」組成要新建的 685 記錄
    *
    * holder_user 一筆只能掛一個人，所以「加入為簽核者」是**新增記錄**，
-   * 不是把人塞進既有記錄。既有的同名記錄一概不動。
+   * 不是把人塞進既有記錄。既有的同名記錄一概不動；新記錄的下一關等設定
+   * 沿用同名記錄中編號最小的那筆（pickRoleTemplate）。
+   *
+   * 同一個帳號只認第一筆（一人一列本來就不會重複，這是最後一道保險）。
+   *
+   * @param {Array<{code: string, roleName: string}>} pairs
+   * @param {number} startSeq - role_id 流水號起點；只做預覽時給 0 即可
+   * @returns {{records: Array, missing: string[]}} missing 是找不到範本的角色名稱，
+   *          非空時呼叫端不得送出（建出來的記錄會缺單位、職稱與下一關）
    */
-  const createHolderRoles = async (userCodes, roleName, roles) => {
-    const { tpl } = pickRoleTemplate(roleName, roles);
-    if (!tpl) throw new Error(`找不到「${roleName}」的既有記錄，無法沿用設定。`);
+  const planHolderRecords = (pairs, roles, startSeq) => {
+    let seq = startSeq;
+    const records = [];
+    const missing = new Set();
+    const seen = new Set();
+    const tplByName = new Map();
 
-    let seq = await nextRoleSeq();
-    const records = userCodes.map((code) => ({
-      [RF.ROLE_ID]:      { value: `${ROLE_ID_PREFIX}${String(seq++).padStart(4, '0')}` },
-      // role_name 是計算欄位，由 unit_name + title_level 自動組出，不寫入
-      [RF.UNIT_NAME]:    { value: tpl.unitName },
-      [RF.TITLE_LEVEL]:  { value: tpl.titleLevel },
-      [RF.HOLDER_TYPE]:  { value: HT.USER },
-      [RF.HOLDER_USER]:  { value: [{ code }] },
-      [RF.HOLDER_GROUP]: { value: [] },
-      [RF.NEXT_ROLE_ID]: { value: tpl.nextRoleId },
-      [RF.IS_CHAIN_END]: { value: tpl.isChainEnd },
-      // 單選必填，範本沒填就給預設值，避免整批寫入失敗
-      [RF.SIGNING_MODE]: { value: tpl.signingMode || SM.ANY },
-      [RF.IS_ACTIVE]:    { value: [CHECKBOX.ACTIVE] },
-    }));
+    for (const { code, roleName } of pairs) {
+      if (!code || !roleName || seen.has(code)) continue;
+      if (!tplByName.has(roleName)) tplByName.set(roleName, pickRoleTemplate(roleName, roles).tpl);
+      const tpl = tplByName.get(roleName);
+      if (!tpl) { missing.add(roleName); continue; }
+      seen.add(code);
 
-    for (const part of chunk(records, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records.json', 'POST', {
-        app: APP_ID.ROLE_DEFINITION,
-        records: part,
+      records.push({
+        [RF.ROLE_ID]:      { value: `${ROLE_ID_PREFIX}${String(seq++).padStart(4, '0')}` },
+        // role_name 是計算欄位，由 unit_name + title_level 自動組出，不寫入
+        [RF.UNIT_NAME]:    { value: tpl.unitName },
+        [RF.TITLE_LEVEL]:  { value: tpl.titleLevel },
+        [RF.HOLDER_TYPE]:  { value: HT.USER },
+        [RF.HOLDER_USER]:  { value: [{ code }] },
+        [RF.HOLDER_GROUP]: { value: [] },
+        [RF.NEXT_ROLE_ID]: { value: tpl.nextRoleId },
+        [RF.IS_CHAIN_END]: { value: tpl.isChainEnd },
+        // 單選必填，範本沒填就給預設值，避免整批寫入失敗
+        [RF.SIGNING_MODE]: { value: tpl.signingMode || SM.ANY },
+        [RF.IS_ACTIVE]:    { value: [CHECKBOX.ACTIVE] },
       });
     }
-    return records.length;
+
+    return { records, missing: [...missing] };
+  };
+
+  /** B 區：一人建一筆新的角色記錄，每個人可以加入不同的角色 */
+  const createHolderRoles = async (pairs, roles) => {
+    const { records, missing } = planHolderRecords(pairs, roles, await nextRoleSeq());
+    if (missing.length) throw new Error(`找不到「${missing.join('、')}」的既有記錄，無法沿用設定`);
+    return sendInChunks(APP_ID.ROLE_DEFINITION, 'POST', records);
   };
 
   /** C 區：批量停用 686 起點記錄（取消勾選「啟用中」，記錄保留不刪除） */
-  const deactivateEntries = async (recordIds) => {
-    const updates = recordIds.map((id) => ({
-      id,
-      record: { [EF.IS_ACTIVE]: { value: [] } },
-    }));
-    for (const part of chunk(updates, CONFIG.WRITE_BATCH)) {
-      await kintoneApi('/k/v1/records.json', 'PUT', { app: APP_ID.EMPLOYEE_ENTRY, records: part });
-    }
-  };
+  const deactivateEntries = (recordIds) => sendInChunks(
+    APP_ID.EMPLOYEE_ENTRY, 'PUT',
+    recordIds.map((id) => ({ id, record: { [EF.IS_ACTIVE]: { value: [] } } })),
+  );
 
   /**
    * D 區前置計算：選定的停用帳號掛在哪些角色上，停用這些角色會影響誰
@@ -876,7 +957,7 @@
   };
 
   /** D 區與 F 區：批量停用角色記錄（取消勾選「啟用中」，簽核者名單完全不動） */
-  const deactivateRoles = (updates) => updateRoleRecords(updates);
+  const deactivateRoles = (updates) => sendInChunks(APP_ID.ROLE_DEFINITION, 'PUT', updates);
 
   /**
    * A 區：一次寫完「685 的下一關」與「686 的起點」
@@ -1246,16 +1327,15 @@
   };
 
   /**
-   * 渲染單一分頁（B～F 共用；A 分頁改走 buildEntryTab，見下方）：
-   * 工具列（第三欄篩選 + 搜尋 + 全選）、人員表格、底部動作列（角色選擇〔選配〕 + 執行按鈕 + 匯出 CSV）
-   * @param {string} groupLabel  - 第三欄標題（B 用「單位」、C 用「單位」、D 用「擔任角色」、
+   * 渲染單一分頁（C～F 共用；A 分頁走 buildEntryTab、B 分頁走 buildHolderTab，見下方）：
+   * 工具列（第三欄篩選 + 搜尋 + 全選）、人員表格、底部動作列（執行按鈕 + 匯出 CSV）
+   * @param {string} groupLabel  - 第三欄標題（C 用「單位」、D 用「擔任角色」、
    *                               E 用「狀態／單位」、F 用「單位」），資料一律放在 users[].units
-   * @param {Array|null} roleOptions - 底部角色選擇器的選項；null 表示此分頁不需要選角色
    * @param {Function|null} onAction - null 表示這是純檢視分頁（E 區），
    *                                   不顯示勾選欄與執行按鈕，只能篩選與匯出
    */
   const buildTab = ({
-    key, users, groupLabel = '單位', roleOptions = null, actionLabel = '', onAction = null, onExport,
+    key, users, groupLabel = '單位', actionLabel = '', onAction = null, onExport,
     // F 區列的是「角色」不是「人」，欄位標題可覆寫
     nameLabel = '姓名', codeLabel = '帳號', titleLabel = '職稱',
   }) => {
@@ -1335,8 +1415,8 @@
         ? `顯示 ${visible.length} 人／已勾選 ${checked.size} 人`
         : `顯示 ${visible.length} 人`;
       if (!actionBtn) return;
-      // 有角色選擇器的分頁（A/B）要「勾了人 + 選了角色」才亮；C/D 勾了人就亮
-      actionBtn.disabled = checked.size === 0 || (roleCombo && !roleCombo.getValue());
+      actionBtn.textContent = checked.size ? `${actionLabel}（${checked.size}）` : actionLabel;
+      actionBtn.disabled = checked.size === 0;
       actionBtn.style.opacity = actionBtn.disabled ? '0.5' : '1';
     };
 
@@ -1357,15 +1437,12 @@
     const footer = document.createElement('div');
     footer.style.cssText = 'display:flex; gap:12px; align-items:center; margin-top:12px; flex-wrap:wrap;';
 
-    const roleCombo = roleOptions ? buildRoleCombo(roleOptions, () => updateCount()) : null;
-
     const actionBtn = selectable ? document.createElement('button') : null;
     if (actionBtn) {
       actionBtn.textContent = actionLabel;
       actionBtn.style.cssText =
         'font-size:15px; padding:10px 24px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;';
-      actionBtn.addEventListener('click', () =>
-        onAction([...checked], roleCombo?.getValue() || '', roleCombo?.getLabel() || ''));
+      actionBtn.addEventListener('click', () => onAction([...checked]));
     }
 
     const exportBtn = document.createElement('button');
@@ -1374,13 +1451,246 @@
       'font-size:14px; padding:10px 18px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer; margin-left:auto;';
     exportBtn.addEventListener('click', () => onExport(visible));
 
-    if (roleCombo) footer.append(roleCombo.el);
     if (actionBtn) footer.append(actionBtn);
     footer.append(exportBtn);
     root.style.cssText = 'display:flex; flex-direction:column; height:100%;';
     root.append(toolbar, listWrap, footer);
     root.dataset.tab = key;
     renderRows();
+    return root;
+  };
+
+  /**
+   * B 分頁：不具簽核身分（一人一列，各自帶入要加入的角色，勾好一次送出）
+   *
+   * 原本底部只有一個角色選擇器，勾起來的人全部加進同一個角色——B 區的人散在各單位，
+   * 一個單位就得做一輪「篩選→勾選→選角色→確認→等重新掃描」，十幾個人就是十幾輪。
+   * 改成每列各自一個選擇器，開啟時就帶入他自己那一關（matchHolderRole），
+   * HR 只要看過、改掉不對的、勾起來，按一次就全部加入。
+   *
+   * 配不到的列紅底、勾不動：可以一列一列挑，也可以先用單位篩選，再用上方
+   * 「批次指定」一次填滿目前顯示的空白列。
+   *
+   * 與 A 分頁一樣，DOM 只建一次，篩選僅切換每列的 display——整個重建會把
+   * 已經挑好的角色一起洗掉。
+   */
+  const buildHolderTab = ({ users, roles, roleOptions, onAction, onExport }) => {
+    const root = document.createElement('div');
+    root.style.cssText = 'display:flex; flex-direction:column; height:100%;';
+
+    // ── 工具列 ──
+    const unitSet = [...new Set(users.flatMap((u) => u.units))].sort();
+    const toolbar = document.createElement('div');
+    toolbar.style.cssText = 'display:flex; gap:12px; align-items:center; margin-bottom:8px; flex-wrap:wrap;';
+    toolbar.innerHTML = `
+      <label style="font-size:14px;">單位：
+        <select data-role="unit" style="font-size:14px; padding:6px;">
+          <option value="">全部（${users.length} 人）</option>
+          ${unitSet.map((o) => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}
+        </select>
+      </label>
+      <input data-role="search" type="text" placeholder="搜尋姓名、帳號、職稱或角色…"
+             style="font-size:14px; padding:6px 10px; border:1px solid #ccc; border-radius:4px; min-width:200px;">
+      <label style="font-size:14px;"><input type="checkbox" data-role="only-unset"> 只看尚未指定</label>
+      <label style="font-size:14px;"><input type="checkbox" data-role="check-all"> 全選（目前顯示且已指定）</label>
+      <span data-role="count" style="font-size:13px; color:#666; margin-left:auto;"></span>
+    `;
+
+    // ── 批次指定：把目前顯示、還沒指定的列一次填成同一個角色 ──
+    const bulkBar = document.createElement('div');
+    bulkBar.style.cssText =
+      'display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; font-size:13px; color:#555;';
+    const bulkBtn = document.createElement('button');
+    bulkBtn.type = 'button';
+    bulkBtn.textContent = '填入目前顯示、尚未指定的列';
+    bulkBtn.style.cssText =
+      'font-size:13px; padding:7px 14px; border:1px solid #93c5fd; background:#fff; color:#1e40af; ' +
+      'border-radius:6px; cursor:pointer;';
+    const bulkCombo = buildRoleCombo(roleOptions, () => {
+      bulkBtn.disabled = !bulkCombo.getValue();
+      bulkBtn.style.opacity = bulkBtn.disabled ? '0.5' : '1';
+    }, { openUp: false, minWidth: '280px' });
+    bulkBtn.disabled = true;
+    bulkBtn.style.opacity = '0.5';
+    bulkBar.append(Object.assign(document.createElement('span'), { textContent: '批次指定：' }),
+                   bulkCombo.el, bulkBtn);
+
+    // ── 表格 ──
+    const listWrap = document.createElement('div');
+    listWrap.style.cssText = 'flex:1; overflow-y:auto; border:1px solid #e0e0e0; border-radius:6px;';
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%; border-collapse:collapse; font-size:14px;';
+    table.innerHTML = `
+      <thead>
+        <tr style="background:#f5f5f5; position:sticky; top:0; z-index:2;">
+          <th style="padding:8px; width:36px;"></th>
+          <th style="padding:8px; text-align:left;">姓名</th>
+          <th style="padding:8px; text-align:left;">帳號</th>
+          <th style="padding:8px; text-align:left;">職稱</th>
+          <th style="padding:8px; text-align:left;">單位</th>
+          <th style="padding:8px; text-align:left;">加入角色</th>
+        </tr>
+      </thead>
+      <tbody></tbody>`;
+    listWrap.appendChild(table);
+    const tbody = table.querySelector('tbody');
+
+    // ── 底部動作列 ──
+    const footer = document.createElement('div');
+    footer.style.cssText = 'display:flex; gap:12px; align-items:center; margin-top:12px; flex-wrap:wrap;';
+    const actionBtn = document.createElement('button');
+    actionBtn.style.cssText =
+      'font-size:15px; padding:10px 24px; background:#3498db; color:#fff; border:none; border-radius:6px; cursor:pointer;';
+    const exportBtn = document.createElement('button');
+    exportBtn.textContent = '匯出 CSV';
+    exportBtn.style.cssText =
+      'font-size:14px; padding:10px 18px; background:#fff; color:#333; border:1px solid #ccc; border-radius:6px; cursor:pointer; margin-left:auto;';
+
+    const state = new Map();     // 帳號 → { u, tr, cb, combo, note, source }
+    // 範本的下一關有沒有設好只跟角色有關，roles 在這個分頁存活期間不會變，算一次就好
+    const hasNextByRole = new Map();
+    const roleHasNext = (roleName) => {
+      if (!hasNextByRole.has(roleName)) hasNextByRole.set(roleName, pickRoleTemplate(roleName, roles).hasNext);
+      return hasNextByRole.get(roleName);
+    };
+
+    /** 依篩選切換每列顯示，並更新計數與按鈕狀態 */
+    const refresh = () => {
+      const unit = toolbar.querySelector('[data-role="unit"]').value;
+      // 英數字不分大小寫（打 jim 要搜得到 Jim）
+      const kw = toolbar.querySelector('[data-role="search"]').value.trim().toLowerCase();
+      const onlyUnset = toolbar.querySelector('[data-role="only-unset"]').checked;
+
+      let assigned = 0;
+      let visible = 0;
+      let picked = 0;
+
+      for (const s of state.values()) {
+        const roleName = s.combo.getValue();
+        const hasRole = Boolean(roleName);
+        if (hasRole) assigned += 1;
+
+        s.cb.disabled = !hasRole;
+        if (s.cb.disabled && s.cb.checked) s.cb.checked = false;
+        s.tr.style.background = hasRole ? '' : '#fdecea';
+
+        // 帶入來源講清楚，HR 才知道哪些是程式猜的、哪些要多看一眼
+        const noNext = hasRole && !roleHasNext(roleName);
+        switch (true) {
+          case !hasRole:
+            s.note.textContent = '配不到他自己那一關，請指定（不需要簽核的人不勾就好）';
+            break;
+          case s.source === 'unit':
+            s.note.textContent = '依單位＋職稱自動帶入';
+            break;
+          case s.source === 'entry':
+            s.note.textContent = '依員工起點對照表的起點帶入';
+            break;
+          default:
+            s.note.textContent = '';
+        }
+        if (noNext) s.note.textContent += '（這一關還沒設下一關）';
+        s.note.style.color = (!hasRole || noNext) ? '#c0392b' : '#888';
+
+        const haystack = [s.u.name, s.u.code, s.u.jobTitle || '', roleName].join(' ').toLowerCase();
+        const show = (!unit || s.u.units.includes(unit)) &&
+          (!kw || haystack.includes(kw)) && (!onlyUnset || !hasRole);
+        s.tr.style.display = show ? '' : 'none';
+        if (show) visible += 1;
+        if (s.cb.checked) picked += 1;
+      }
+
+      toolbar.querySelector('[data-role="count"]').textContent =
+        `已指定 ${assigned}/${state.size} 人・顯示 ${visible} 人・已勾選 ${picked} 人`;
+      actionBtn.textContent = picked ? `一次加入 ${picked} 人為簽核者` : '加入為簽核者';
+      actionBtn.disabled = picked === 0;
+      actionBtn.style.opacity = actionBtn.disabled ? '0.5' : '1';
+    };
+
+    const appendRow = (u) => {
+      const match = matchHolderRole(u, roles);
+      const tr = document.createElement('tr');
+      tr.style.borderTop = '1px solid #eee';
+      tr.innerHTML = `
+        <td style="padding:6px 8px; text-align:center;"></td>
+        <td style="padding:6px 8px;">${esc(u.name)}</td>
+        <td style="padding:6px 8px; color:#666;">${esc(u.code)}</td>
+        <td style="padding:6px 8px;">${u.jobTitle
+          ? `<span style="display:inline-block; padding:1px 8px; border-radius:4px; background:#eef2ff; border:1px solid #c7d2fe; color:#3730a3; font-weight:600;">${esc(u.jobTitle)}</span>`
+          : '<span style="color:#bbb;">—</span>'}</td>
+        <td style="padding:6px 8px;">${esc(u.units.join('、'))}</td>
+        <td style="padding:6px 8px;"></td>`;
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.addEventListener('change', () => refresh());
+      tr.cells[0].appendChild(cb);
+
+      const s = { u, tr, cb, combo: null, note: null, source: match?.source || '' };
+      // 手動改過就不再標示「自動帶入」
+      s.combo = buildRoleCombo(roleOptions, () => { s.source = 'manual'; refresh(); },
+        { openUp: false, minWidth: '260px', alignRight: true });
+      if (match) s.combo.setValue(match.roleName);
+      s.note = document.createElement('div');
+      s.note.style.cssText = 'margin-top:3px; font-size:12px;';
+      tr.cells[5].append(s.combo.el, s.note);
+
+      tbody.appendChild(tr);
+      state.set(u.code, s);
+    };
+
+    users.forEach(appendRow);
+    if (!users.length) {
+      tbody.innerHTML =
+        '<tr><td colspan="6" style="padding:16px; color:#999; text-align:center;">沒有不具簽核身分的人員</td></tr>';
+    }
+
+    toolbar.querySelector('[data-role="unit"]').addEventListener('change', refresh);
+    toolbar.querySelector('[data-role="search"]').addEventListener('input', refresh);
+    toolbar.querySelector('[data-role="only-unset"]').addEventListener('change', refresh);
+    toolbar.querySelector('[data-role="check-all"]').addEventListener('change', (e) => {
+      for (const s of state.values()) {
+        if (s.tr.style.display === 'none' || s.cb.disabled) continue;
+        s.cb.checked = e.target.checked;
+      }
+      refresh();
+    });
+
+    // 批次填入只碰「目前顯示且還沒指定」的列，已經帶好或手選過的不覆蓋；
+    // 填好順手勾起來——HR 已經明確選了這個角色，不必再一列一列勾
+    bulkBtn.addEventListener('click', () => {
+      const roleName = bulkCombo.getValue();
+      if (!roleName) return;
+      for (const s of state.values()) {
+        if (s.tr.style.display === 'none' || s.combo.getValue()) continue;
+        s.combo.setValue(roleName);
+        s.source = 'manual';
+        s.cb.checked = true;
+      }
+      refresh();
+    });
+
+    actionBtn.addEventListener('click', () => {
+      const pairs = [];
+      let readyRows = 0;         // 已指定角色但沒勾的人（最容易被忽略）
+      let unassignedRows = 0;
+      for (const s of state.values()) {
+        const roleName = s.combo.getValue();
+        if (!roleName) { unassignedRows += 1; continue; }
+        if (!s.cb.checked) { readyRows += 1; continue; }
+        pairs.push({ code: s.u.code, name: s.u.name, roleName });
+      }
+      onAction({ pairs, readyRows, unassignedRows });
+    });
+
+    exportBtn.addEventListener('click', () => {
+      onExport([...state.values()].filter((s) => s.tr.style.display !== 'none').map((s) => s.u));
+    });
+
+    footer.append(actionBtn, exportBtn);
+    root.append(toolbar, bulkBar, listWrap, footer);
+    root.dataset.tab = 'B';
+    refresh();
     return root;
   };
 
@@ -2282,6 +2592,39 @@
     ...buildRoleOptions(roles, { valueBy: 'roleId' }),
   ];
 
+  /** 確認視窗裡的預覽清單（可捲動的明細框）；lines 是已經跳脫過的 HTML 片段 */
+  const previewListHtml = (lines) =>
+    `<div style="max-height:220px; overflow-y:auto; border:1px solid #e5e7eb; border-radius:6px; padding:4px 10px; font-size:14px;">` +
+    lines.map((l) => `<div style="padding:4px 2px; border-bottom:1px solid #f0f0f0;">${l}</div>`).join('') +
+    `</div>`;
+
+  /**
+   * sendInChunks 的結果 → 結果視窗的 Swal 選項
+   *
+   * 全部成功就照舊自動關閉；有任何一批失敗就停下來講清楚成功幾筆、失敗幾筆，
+   * 以及失敗的那幾批沒有寫進去——重新掃描後它們還在清單上，再勾一次就好。
+   *
+   * @param {{ok: number, failed: number, errors: string[]}} result
+   * @param {string} verb - 動詞，如「新增」「停用」
+   * @param {string} noun - 單位名詞，如「角色記錄」「起點設定」
+   */
+  const writeResultOptions = ({ ok, failed, errors }, verb, noun) => {
+    const errorHtml = failed
+      ? `<div style="text-align:left;">成功 <strong>${ok}</strong> 筆、失敗 <strong style="color:#c0392b;">${failed}</strong> 筆。<br>` +
+        `失敗的批次一筆都沒有寫入，重新掃描後會留在清單上，可以再勾選重試。` +
+        `<div style="margin-top:8px; color:#c0392b; font-size:13px;">${
+          [...new Set(errors)].map((e) => esc(e)).join('<br>')}</div></div>`
+      : '';
+    switch (true) {
+      case failed === 0:
+        return { icon: 'success', title: `已${verb} ${ok} 筆${noun}`, timer: 2200, showConfirmButton: false };
+      case ok === 0:
+        return { icon: 'error', title: `${verb}${noun}失敗`, html: errorHtml, confirmButtonText: '知道了' };
+      default:
+        return { icon: 'warning', title: `${verb}${noun}：部分失敗`, html: errorHtml, confirmButtonText: '知道了' };
+    }
+  };
+
   /**
    * 執行一次批量寫入動作，統一處理「轉圈中／成功／失敗」三種狀態。
    *
@@ -2470,50 +2813,67 @@
     }
 
     // ── B 分頁：不具簽核身分 ──
-    const tabB = buildTab({
-      key: 'B',
+    const tabB = buildHolderTab({
       users: model.noHolder,
+      roles: model.roles,
       roleOptions: buildRoleOptions(model.roles, { userTypeOnly: true, valueBy: 'roleName' }),
-      actionLabel: '加入為簽核者',
-      onAction: async (codes, roleName, roleLabel) => {
-        if (!codes.length || !roleName) return;
+      onAction: async ({ pairs, readyRows, unassignedRows }) => {
+        if (!pairs.length) return;
 
-        const { tpl, count, nextConsistent, hasNext } = pickRoleTemplate(roleName, model.roles);
-        if (!tpl) {
-          await showWarning('無法加入', `找不到「${roleName}」的既有記錄，無法沿用設定。`);
+        // 先用流水號 0 試排一次：只為了在確認前抓出找不到範本的角色，不會送出
+        const { records, missing } = planHolderRecords(pairs, model.roles, 0);
+        if (missing.length) {
+          await showWarning('無法加入', `找不到「${missing.join('、')}」的既有記錄，無法沿用設定。`);
           return;
         }
 
+        // 依角色分組列出「誰加進哪一關」，範本有問題的角色就在那一行標出來
+        const byRole = new Map();
+        for (const p of pairs) {
+          if (!byRole.has(p.roleName)) byRole.set(p.roleName, []);
+          byRole.get(p.roleName).push(p);
+        }
+        let noNextRoles = 0;
+        const lines = [...byRole.entries()].map(([roleName, ps]) => {
+          const { tpl, nextConsistent, hasNext } = pickRoleTemplate(roleName, model.roles);
+          if (!hasNext) noNextRoles += 1;
+          return `<strong>${esc(roleName)}</strong>（${ps.length} 人）：` +
+            esc(ps.map((p) => `${p.name}（${p.code}）`).join('、')) +
+            (hasNext ? '' :
+              '<br><span style="color:#c0392b; font-size:13px;">└ 這一關還沒設下一關、也沒勾終點，新記錄會沿用同樣的空白設定</span>') +
+            (nextConsistent ? '' :
+              `<br><span style="color:#c0392b; font-size:13px;">└ 同名記錄的下一關不一致，新記錄只沿用記錄 ${esc(tpl.recordId)} 的設定</span>`);
+        });
+
         const ok = (await Swal.fire({
           icon: 'question',
-          title: `新增 ${codes.length} 筆角色記錄？`,
+          title: `新增 ${records.length} 筆角色記錄？`,
           html:
             `<div style="text-align:left;">` +
-            `角色：<strong>${esc(roleLabel)}</strong><br>` +
-            `一筆記錄只掛一個人，所以每人各建一筆新記錄，<strong>既有的 ${count} 筆不會被更動</strong>。<br>` +
-            `下一關等設定沿用記錄 ${esc(tpl.recordId)}（${esc(tpl.roleId)}）。` +
-            (nextConsistent ? '' :
-              `<div style="margin-top:8px; color:#c0392b; font-weight:700;">` +
-              `注意：現有同名記錄的「下一關」設定不一致，新記錄只會沿用其中一種，` +
-              `建議先用「批次設定下一關」統一。</div>`) +
-            (hasNext ? '' :
-              `<div style="margin-top:8px; color:#c0392b; font-weight:700;">` +
-              `注意：這一關在角色定義表沒有設下一關、也沒有勾終點，新記錄會沿用同樣的空白設定。` +
-              `之後若有人以它為起點，送單會卡在這一關——請接著用「批次設定下一關」補上。</div>`) +
+            `<div style="margin-bottom:8px;">一筆記錄只掛一個人，所以每人各建一筆新記錄，<strong>既有記錄不會被更動</strong>；` +
+            `下一關等設定沿用同名記錄中編號最小的那筆。</div>` +
+            previewListHtml(lines) +
+            (noNextRoles
+              ? `<div style="margin-top:10px; color:#c0392b; font-weight:700;">有 ${noNextRoles} 個關卡還沒設下一關，` +
+                `之後有人以它為起點會卡住——寫入後請到 G 分頁或「批次設定下一關」補上。</div>`
+              : '') +
+            (readyRows
+              ? `<div style="margin-top:10px; color:#92400e; font-weight:600;">另有 <strong>${readyRows}</strong> 人` +
+                `已經帶入角色但沒有勾選，這次<strong>不會加入</strong>。</div>`
+              : '') +
+            (unassignedRows
+              ? `<div style="margin-top:6px; color:#777;">另有 ${unassignedRows} 人還沒指定角色，這次會略過。</div>`
+              : '') +
             `</div>`,
-          width: '620px',
+          width: '660px',
           showCancelButton: true, confirmButtonText: '確定新增', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
 
         await runWriteAction({
           loadingTitle: '寫入中…',
-          write: () => createHolderRoles(codes, roleName, model.roles),
-          buildSuccessOptions: (created) => ({
-            icon: 'success',
-            title: `已新增 ${created} 筆「${roleName}」`,
-            timer: 2200, showConfirmButton: false,
-          }),
+          write: () => createHolderRoles(pairs, model.roles),
+          buildSuccessOptions: (result) => writeResultOptions(result, '新增', '角色記錄'),
           rescan,
         });
       },
@@ -2529,10 +2889,25 @@
         const targets = model.staleEntries.filter((u) => codes.includes(u.code));
         const recordIds = targets.flatMap((u) => u.recordIds);
         if (!recordIds.length) return;
+
+        // 疑似回任的人停用舊起點後，新帳號還得另外設——先講，免得以為處理完了
+        const rehired = targets.filter((u) => u.note).length;
         const ok = (await Swal.fire({
           icon: 'question',
           title: `停用 ${recordIds.length} 筆起點設定？`,
-          html: '這些員工的 kintone 帳號已停用。<br>只會取消勾選「啟用中」，記錄保留、不會刪除。',
+          html:
+            `<div style="text-align:left;">` +
+            `<div style="margin-bottom:8px;">這些員工的 kintone 帳號已停用。只會取消勾選「啟用中」，記錄保留、不會刪除。</div>` +
+            previewListHtml(targets.map((u) =>
+              `${esc(u.name)}（${esc(u.code)}）` +
+              (u.recordIds.length > 1 ? `<span style="color:#888;">・${u.recordIds.length} 筆</span>` : '') +
+              (u.note ? `<br><span style="color:#166534; font-size:13px;">└ ${esc(u.note)}</span>` : ''))) +
+            (rehired
+              ? `<div style="margin-top:10px; color:#166534; font-weight:600;">其中 ${rehired} 人疑似回任，` +
+                `停用後請到 A 分頁替新帳號設定起點。</div>`
+              : '') +
+            `</div>`,
+          width: '620px',
           showCancelButton: true, confirmButtonText: '確定停用', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
@@ -2540,9 +2915,7 @@
         await runWriteAction({
           loadingTitle: '停用中…',
           write: () => deactivateEntries(recordIds),
-          buildSuccessOptions: () => ({
-            icon: 'success', title: `已停用 ${recordIds.length} 筆起點設定`, timer: 1800, showConfirmButton: false,
-          }),
+          buildSuccessOptions: (result) => writeResultOptions(result, '停用', '起點設定'),
           rescan,
         });
       },
@@ -2568,14 +2941,19 @@
              </div>`
           : '';
 
+        const picked = model.staleHolders.filter((u) => codes.includes(u.code));
         const ok = (await Swal.fire({
           icon: 'warning',
           title: `停用 ${updates.length} 筆角色記錄？`,
           html:
             `<div style="text-align:left;">` +
-            `對象角色：<strong>${esc(roleNames.join('、'))}</strong><br>` +
-            `只會取消勾選「啟用中」，<strong>簽核者名單不會有任何變動</strong>。` +
+            `<div style="margin-bottom:8px;">共 ${roleNames.length} 個角色。只會取消勾選「啟用中」，` +
+            `<strong>簽核者名單不會有任何變動</strong>。</div>` +
+            previewListHtml(picked.map((u) =>
+              `${esc(u.name)}（${esc(u.code)}）→ <strong>${esc(u.units.join('、'))}</strong>` +
+              (u.note ? `<br><span style="color:#166534; font-size:13px;">└ ${esc(u.note)}，建議改到 685 換人，而不是停用</span>` : ''))) +
             `</div>${sharedHtml}`,
+          width: '620px',
           showCancelButton: true, confirmButtonText: '確定停用', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
@@ -2583,9 +2961,7 @@
         await runWriteAction({
           loadingTitle: '停用中…',
           write: () => deactivateRoles(updates),
-          buildSuccessOptions: () => ({
-            icon: 'success', title: `已停用 ${updates.length} 筆角色記錄`, timer: 2000, showConfirmButton: false,
-          }),
+          buildSuccessOptions: (result) => writeResultOptions(result, '停用', '角色記錄'),
           rescan,
         });
       },
@@ -2627,8 +3003,13 @@
           icon: 'question',
           title: `停用 ${targets.length} 筆角色？`,
           html:
-            `<div style="text-align:left;">這些角色是「指定個人」但沒有指定任何簽核者，` +
-            `流程跑到這關沒人能簽。<br>只會取消勾選「啟用中」，記錄保留、不會刪除。</div>${linkedHtml}`,
+            `<div style="text-align:left;"><div style="margin-bottom:8px;">這些角色是「指定個人」但沒有指定任何簽核者，` +
+            `流程跑到這關沒人能簽。只會取消勾選「啟用中」，記錄保留、不會刪除。</div>` +
+            previewListHtml(targets.map((r) =>
+              `${esc(r.name)}<span style="color:#888;">（${esc(r.code)}）</span>` +
+              (r.inbound ? `<span style="color:#c0392b;">・${r.inbound} 個關卡指向</span>` : ''))) +
+            `</div>${linkedHtml}`,
+          width: '620px',
           showCancelButton: true, confirmButtonText: '確定停用', cancelButtonText: '取消',
         })).isConfirmed;
         if (!ok) return;
@@ -2639,9 +3020,7 @@
             id: r.recordId,
             record: { [RF.IS_ACTIVE]: { value: [] } },
           }))),
-          buildSuccessOptions: () => ({
-            icon: 'success', title: `已停用 ${targets.length} 筆角色`, timer: 1800, showConfirmButton: false,
-          }),
+          buildSuccessOptions: (result) => writeResultOptions(result, '停用', '角色記錄'),
           rescan,
         });
       },
@@ -2729,6 +3108,16 @@
       '若這一關其實還需要，請改到 B 分頁把人指派進去，不要停用。';
     tabF.prepend(tabFNote);
 
+    const tabBNote = document.createElement('div');
+    tabBNote.style.cssText =
+      'background:#eef5fb; border:1px solid #b8d6ec; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px;';
+    tabBNote.innerHTML =
+      '<strong>每個人已經帶入「他自己那一關」</strong>（先比單位＋職稱，配不到再看員工起點對照表的起點），' +
+      '看過沒問題就勾起來，按一次全部加入；每人各建一筆角色記錄，既有記錄不動。<br>' +
+      '紅底是配不到的人：逐列挑，或先用「單位」篩選，再用「批次指定」一次填滿顯示中的空白列。' +
+      '不需要簽核的人不勾就好。';
+    tabB.prepend(tabBNote);
+
     const tabENote = document.createElement('div');
     tabENote.style.cssText =
       'background:#eef5fb; border:1px solid #b8d6ec; border-radius:6px; padding:10px 14px; margin-bottom:10px; font-size:13px;';
@@ -2736,7 +3125,9 @@
       '<strong>這些帳號的姓名沒有「中文 + 英文」都具備</strong>（只有中文、只有英文，或純數字／代號／符號），' +
       '多半是系統／測試／整合用帳號，或姓名尚未依規則補齊。<br>' +
       '已自 A～D 各區排除，避免每次掃描都要重複略過；若其中有真人，' +
-      '請 IT 至 cybozu 後台把姓名補成「王小明 Jimmy Wang」的格式，下次掃描就會回到正常區。';
+      '請 IT 至 cybozu 後台把姓名補成「王小明 Jimmy Wang」的格式，下次掃描就會回到正常區。<br>' +
+      '本分頁不提供批次修正：姓名存在 cybozu 共通管理，改名要系統管理員權限；' +
+      '缺的中文或英文名也無從推得，只能人工補。可用「匯出 CSV」把清單交給 IT 一次處理。';
     tabE.prepend(tabENote);
 
     // 簽核群組內的停用帳號：工具無法改群組成員，插入提醒橫幅請 IT 至 cybozu 後台處理
@@ -2753,7 +3144,7 @@
     // ── 分頁切換 ──
     const tabs = [
       { key: 'A', label: `A. 未設定起點（${model.noEntry.length} 人）`, el: tabA, hint: '員工起點對照表沒有記錄、或有記錄卻沒填起點角色的人，兩種都送不出單' },
-      { key: 'B', label: `B. 不具簽核身分（${model.noHolder.length} 人）`, el: tabB, hint: '多數基層同仁本來就不簽核，此區用於確認主管沒被漏掉' },
+      { key: 'B', label: `B. 不具簽核身分（${model.noHolder.length} 人）`, el: tabB, hint: '使用中卻不是任何角色的簽核者；每人已自動帶入他自己那一關，看過後勾選、一次加入' },
       { key: 'C', label: `C. 已停用仍有起點（${model.staleEntries.length} 人）`, el: tabC, hint: '帳號已停用但起點記錄仍啟用中，建議停用避免誤導' },
       { key: 'D', label: `D. 已停用仍是簽核者（${model.staleHolders.length} 人）`, el: tabD, hint: '帳號已停用卻仍是簽核者，流程跑到該關會卡住；本區只會取消該角色的「啟用中」，不會動簽核者名單' },
       { key: 'E', label: `E. 姓名格式異常（${model.oddNames.length} 人）`, el: tabE, hint: '姓名未同時具備中文與英文，多為系統／測試／整合帳號或姓名未補齊；已自 A～D 排除，僅供人工確認' },
@@ -2805,7 +3196,9 @@
     groupNoEntryUsers, matchEntryRole, isNextRoleConsistent,
     hasNextStep, inspectNextStep, walkBackTo, planNextStepUpdates, buildBrokenEntries,
     planEntryWrites, guessTitleLevel, guessUnitName, deriveRoleNameSeparator,
-    buildNewRoleRecords, CHAIN_END_VALUE, CREATE_ROLE_VALUE,
+    buildNewRoleRecords, matchHolderRole, planHolderRecords, sendInChunks, writeResultOptions,
+    buildHolderTab,
+    CHAIN_END_VALUE, CREATE_ROLE_VALUE,
   });
 
   // 掛在共用工具列（core/09-tool-registry.js）的「inspect」群組，不再自己長一顆按鈕

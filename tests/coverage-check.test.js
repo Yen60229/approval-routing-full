@@ -538,3 +538,163 @@ describe('buildNewRoleRecords', () => {
     expect(roleIdByRow.get('g:海運')).toBe('ROLE_0012');
   });
 });
+
+// ─── B 區：一人一列各自帶入角色 ─────────────────────────────────────────────
+
+describe('matchHolderRole', () => {
+  const roles = [
+    mkRole('10', 'ROLE_0010', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('20', 'ROLE_0020', '海運貨物－課長', '海運貨物', '課長', 'ROLE_0200'),
+    { ...mkRole('30', 'ROLE_0030', '資訊部－專員', '資訊部', '專員'), holderType: '指定群組' },
+  ];
+
+  it('單位＋職稱配得到就帶入他自己那一關', () => {
+    const m = Internals().matchHolderRole(
+      { units: ['海運貨物'], jobTitle: '課員', entryRoleId: 'ROLE_0020' }, roles);
+    expect(m).toEqual({ roleName: '海運貨物－課員', source: 'unit' });
+  });
+
+  it('配不到單位＋職稱時退而用 686 的起點角色', () => {
+    const m = Internals().matchHolderRole(
+      { units: ['海運貨物', '業務部'], jobTitle: '課長', entryRoleId: 'ROLE_0020' }, roles);
+    expect(m).toEqual({ roleName: '海運貨物－課長', source: 'entry' });
+  });
+
+  it('群組型角色不配（成員由 IT 在後台維護，工具加不進去）', () => {
+    expect(Internals().matchHolderRole(
+      { units: ['資訊部'], jobTitle: '專員', entryRoleId: 'ROLE_0030' }, roles)).toBeNull();
+  });
+
+  it('兩者都沒有時回 null，不做模糊比對', () => {
+    expect(Internals().matchHolderRole({ units: ['資訊部'], jobTitle: '課員' }, roles)).toBeNull();
+  });
+});
+
+describe('planHolderRecords', () => {
+  const roles = [
+    mkRole('11', 'ROLE_0011', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('10', 'ROLE_0010', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('20', 'ROLE_0020', '海運貨物－課長', '海運貨物', '課長', 'ROLE_0200'),
+  ];
+
+  it('每人各建一筆、可加入不同角色，role_id 連號', () => {
+    const { records, missing } = Internals().planHolderRecords([
+      { code: 'u1', roleName: '海運貨物－課員' },
+      { code: 'u2', roleName: '海運貨物－課長' },
+    ], roles, 50);
+    expect(missing).toEqual([]);
+    expect(records.map((r) => r.role_id.value)).toEqual(['ROLE_0050', 'ROLE_0051']);
+    expect(records[0].holder_user.value).toEqual([{ code: 'u1' }]);
+    expect(records[1].next_role_id.value).toBe('ROLE_0200');
+    expect(records[1].title_level.value).toBe('課長');
+  });
+
+  it('同一個帳號只建一筆', () => {
+    const { records } = Internals().planHolderRecords([
+      { code: 'u1', roleName: '海運貨物－課員' },
+      { code: 'u1', roleName: '海運貨物－課長' },
+    ], roles, 1);
+    expect(records).toHaveLength(1);
+  });
+
+  it('不寫 role_name（計算欄位）', () => {
+    const { records } = Internals().planHolderRecords(
+      [{ code: 'u1', roleName: '海運貨物－課員' }], roles, 1);
+    expect('role_name' in records[0]).toBe(false);
+  });
+
+  it('找不到範本的角色列進 missing，不產生記錄', () => {
+    const { records, missing } = Internals().planHolderRecords(
+      [{ code: 'u1', roleName: '不存在的角色' }], roles, 1);
+    expect(records).toHaveLength(0);
+    expect(missing).toEqual(['不存在的角色']);
+  });
+});
+
+describe('sendInChunks', () => {
+  it('每批 ≤ 100 筆；某一批失敗不擋後面的批次，並回報成功／失敗筆數', async () => {
+    const records = Array.from({ length: 250 }, (_, i) => ({ id: String(i) }));
+    kintone.api.mockReset();
+    kintone.api
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce({ message: '欄位值不正確' })
+      .mockResolvedValueOnce({});
+
+    const result = await Internals().sendInChunks(686, 'PUT', records);
+
+    expect(kintone.api).toHaveBeenCalledTimes(3);
+    expect(kintone.api.mock.calls.map((c) => c[2].records.length)).toEqual([100, 100, 50]);
+    expect(result).toEqual({ ok: 150, failed: 100, errors: ['欄位值不正確'] });
+  });
+});
+
+describe('writeResultOptions', () => {
+  it('全部成功時自動關閉', () => {
+    const o = Internals().writeResultOptions({ ok: 3, failed: 0, errors: [] }, '停用', '起點設定');
+    expect(o.icon).toBe('success');
+    expect(o.title).toBe('已停用 3 筆起點設定');
+  });
+
+  it('部分失敗時停下來講清楚成功幾筆、失敗幾筆', () => {
+    const o = Internals().writeResultOptions({ ok: 100, failed: 50, errors: ['x'] }, '停用', '起點設定');
+    expect(o.icon).toBe('warning');
+    expect(o.html).toContain('成功 <strong>100</strong> 筆');
+    expect(o.html).toContain('50</strong> 筆');
+  });
+
+  it('全部失敗時用錯誤圖示', () => {
+    expect(Internals().writeResultOptions({ ok: 0, failed: 2, errors: ['x'] }, '新增', '角色記錄').icon)
+      .toBe('error');
+  });
+});
+
+describe('buildHolderTab（B 分頁 dry-run：不打 API，只驗證畫面送出的內容）', () => {
+  const roles = [
+    mkRole('10', 'ROLE_0010', '海運貨物－課員', '海運貨物', '課員', 'ROLE_0100'),
+    mkRole('20', 'ROLE_0020', '資訊部－課長', '資訊部', '課長', 'ROLE_0200'),
+  ];
+  const roleOptions = [
+    { unit: '海運貨物', items: [{ value: '海運貨物－課員', label: '海運貨物－課員' }] },
+    { unit: '資訊部', items: [{ value: '資訊部－課長', label: '資訊部－課長' }] },
+  ];
+  const users = [
+    { code: 'u1', name: 'Amy 王', jobTitle: '課員', units: ['海運貨物'] },
+    { code: 'u2', name: 'Ben 李', jobTitle: '課員', units: ['海運貨物'] },
+    { code: 'u3', name: 'Cat 陳', jobTitle: '專任', units: ['資訊部'] },
+  ];
+
+  const setup = () => {
+    let sent = null;
+    const tab = Internals().buildHolderTab({
+      users, roles, roleOptions, onAction: (p) => { sent = p; }, onExport: () => {},
+    });
+    document.body.innerHTML = '';
+    document.body.appendChild(tab);
+    const rowOf = (code) => [...tab.querySelectorAll('tbody tr')]
+      .find((tr) => tr.cells[2]?.textContent === code);
+    const cbOf = (code) => rowOf(code).querySelector('input[type="checkbox"]');
+    const actionBtn = [...tab.querySelectorAll('button')].find((b) => b.textContent.includes('簽核者'));
+    return { tab, cbOf, actionBtn, getSent: () => sent };
+  };
+
+  it('配得到的人自動帶入、可勾；配不到的人勾不動', () => {
+    const { cbOf } = setup();
+    expect(cbOf('u1').disabled).toBe(false);
+    expect(cbOf('u2').disabled).toBe(false);
+    expect(cbOf('u3').disabled).toBe(true);
+  });
+
+  it('全選後按一次，送出每人各自的角色', () => {
+    const { tab, actionBtn, getSent } = setup();
+    const all = tab.querySelector('[data-role="check-all"]');
+    all.checked = true;
+    all.dispatchEvent(new Event('change'));
+    expect(actionBtn.textContent).toBe('一次加入 2 人為簽核者');
+    actionBtn.click();
+    expect(getSent().pairs).toEqual([
+      { code: 'u1', name: 'Amy 王', roleName: '海運貨物－課員' },
+      { code: 'u2', name: 'Ben 李', roleName: '海運貨物－課員' },
+    ]);
+    expect(getSent().unassignedRows).toBe(1);
+  });
+});
